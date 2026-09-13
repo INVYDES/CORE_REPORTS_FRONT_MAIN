@@ -1,11 +1,10 @@
 <script setup lang = "ts">
 
-    import { computed, ref, onMounted } from 'vue'
-    import { Bell, Menu, Mail } from 'lucide-vue-next'
+    import { computed } from 'vue'
+    import { Bell, Menu } from 'lucide-vue-next'
     import { useAuthStore } from '../../stores/authStore'
     import { storeToRefs } from 'pinia'
     import { getDependenciaName } from '../../data/mockDependencias'
-    import { notificacionesApi } from '../../api/notificaciones'
 
     const emit = defineEmits(['toggle-sidebar'])
 
@@ -13,35 +12,11 @@
     const { currentUser } = storeToRefs(authStore)
 
     const enterpriseName = computed(() => {
-        const depId = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-        return getDependenciaName(depId)
+        return currentUser.value?.empresa?.nombre 
+            || (currentUser.value ? getDependenciaName(currentUser.value.idDependencia) : 'Sin Empresa')
     })
 
-    const notifications = ref<any[]>([])
-    const showDropdown = ref(false)
-    const loadingNotif = ref(false)
-    const unreadCount = computed(() => notifications.value.filter(n => !n.leida_at).length)
-
-    const fetchNotifications = async () => {
-        try {
-            loadingNotif.value = true
-            const res = await notificacionesApi.list({ per_page: 20 })
-            const list = res.data || res
-            notifications.value = Array.isArray(list) ? list : []
-        } catch {} finally { loadingNotif.value = false }
-    }
-    const toggleDropdown = () => {
-        showDropdown.value = !showDropdown.value
-        if (showDropdown.value) fetchNotifications()
-    }
-    const markRead = async (id:number) => {
-        try { await notificacionesApi.markRead(id); const n = notifications.value.find(x=>x.id===id); if(n) n.leida_at = new Date().toISOString() } catch {}
-    }
-    const markAllRead = async () => {
-        try { await notificacionesApi.markAllRead(); notifications.value.forEach(n=> n.leida_at = n.leida_at || new Date().toISOString()) } catch {}
-    }
-    onMounted(fetchNotifications)
-
+    // Returns the first letter of the user's name and last name to be shown in the avatar
     const initialName = computed(() => {
         const nombre = currentUser.value?.nombre;
         return nombre ? nombre.charAt(0).toUpperCase() : '';
@@ -51,14 +26,17 @@
         return apellidos ? apellidos.charAt(0).toUpperCase() : '';
     });
 
+    // Shows role as a label in header
     const roleLabel = computed(() => {
-        if(currentUser.value?.rol === 0) return 'Default'
-        else if(currentUser.value?.rol === 1) return 'Administrador Técnico'
-        else if(currentUser.value?.rol === 2) return 'Administrador Comercial'
-        else if(currentUser.value?.rol === 3) return 'Técnico'
+        if (!currentUser.value) return 'Desconocido'
+        if (currentUser.value.rol === 0) return 'Default'
+        else if (currentUser.value.rol === 1) return 'Administrador Técnico'
+        else if (currentUser.value.rol === 2) return 'Administrador Comercial'
+        else if (currentUser.value.rol === 3) return 'Técnico'
         else return 'Desconocido'
     });
 
+    //{{ initialName }}{{ initialLastName }}
 </script>
 
 <!------------------------------------------------------------------------------------------------------------------>
@@ -83,30 +61,10 @@
         <!-- Right Header -->
         <div class = "header-right">
 
-            <!--Icon real conectado a /api/notificaciones -->
-            <div class = "icon-btn" @click="toggleDropdown" title="Notificaciones">
+            <!--Icon-->
+            <div class = "icon-btn">
                 <Bell :size = "20" />
-                <span v-if="unreadCount>0" class = "badge">{{ unreadCount > 9 ? '9+' : unreadCount }}</span>
-
-                <div v-if="showDropdown" class="notif-dropdown" @click.stop>
-                    <div class="notif-header">
-                        <span class="notif-title">Notificaciones</span>
-                        <button v-if="unreadCount>0" @click="markAllRead" class="mark-all">Marcar todas leídas</button>
-                    </div>
-                    <div v-if="loadingNotif" class="notif-empty">Cargando...</div>
-                    <div v-else-if="notifications.length===0" class="notif-empty">Sin notificaciones</div>
-                    <div v-else class="notif-list">
-                        <div v-for="n in notifications" :key="n.id" class="notif-item" :class="{ unread: !n.leida_at }" @click="markRead(n.id)">
-                            <div class="notif-icon"><Mail :size="14" /></div>
-                            <div class="notif-content">
-                                <div class="notif-asunto">{{ n.titulo || n.asunto }}</div>
-                                <div class="notif-cuerpo">{{ n.cuerpo?.slice(0,80) }}</div>
-                                <div class="notif-meta">{{ n.referencia_tipo }} #{{ n.referencia_id }} · {{ new Date(n.created_at).toLocaleDateString() }}</div>
-                            </div>
-                            <span v-if="!n.leida_at" class="dot"></span>
-                        </div>
-                    </div>
-                </div>
+                <span class = "badge">3</span>
             </div>
 
             <!--User Profile-->
@@ -248,50 +206,6 @@
             font-weight: bold;
             border: 2px solid white;
         }
-    }
-
-    .notif-dropdown {
-        position: absolute;
-        top: 40px;
-        right: 0;
-        width: 360px;
-        max-height: 420px;
-        background: white;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        overflow: hidden;
-        z-index: 100;
-        display: flex;
-        flex-direction: column;
-    }
-    .notif-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 12px 16px;
-        border-bottom: 1px solid #f1f5f9;
-        background: #f8fafc;
-        .notif-title { font-weight: 700; font-size: 0.9rem; color: #0f172a; }
-        .mark-all { background: none; border: none; color: #3b82f6; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
-    }
-    .notif-empty { padding: 24px; text-align: center; color: #94a3b8; font-size: 0.85rem; }
-    .notif-list { overflow-y: auto; max-height: 340px; }
-    .notif-item {
-        display: flex;
-        gap: 12px;
-        padding: 12px 16px;
-        border-bottom: 1px solid #f1f5f9;
-        cursor: pointer;
-        transition: background 0.15s;
-        &:hover { background: #f8fafc; }
-        &.unread { background: #eff6ff; }
-        .notif-icon { width: 32px; height: 32px; border-radius: 8px; background: #e0e7ff; color: #4f46e5; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-        .notif-content { flex: 1; min-width: 0; }
-        .notif-asunto { font-weight: 600; font-size: 0.85rem; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .notif-cuerpo { font-size: 0.78rem; color: #64748b; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .notif-meta { font-size: 0.7rem; color: #94a3b8; margin-top: 4px; }
-        .dot { width: 8px; height: 8px; border-radius: 50%; background: #3b82f6; flex-shrink: 0; margin-top: 8px; }
     }
 
     .user-profile {

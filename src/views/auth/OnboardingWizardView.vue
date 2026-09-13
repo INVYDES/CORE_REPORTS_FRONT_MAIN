@@ -3,38 +3,97 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
 import { storeToRefs } from 'pinia'
-import client from '../../api/client'
-import { useToast } from 'vue-toastification'
+import { mockUsers } from '../../data/mockUsers'
+import type { Usuario } from '../../data/mockUsers'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const { currentUser } = storeToRefs(authStore)
-const toast = useToast()
 
+// Protection logic: Only Admin Comercial (Rol 2) and "isFirstLogin" (simulated)
 onMounted(() => {
-    if (!currentUser.value || (currentUser.value as any).rol !== 2) {
+    // In a real app, isFirstLogin would be checked. For our simulation, 
+    // we'll assume they need onboarding if accessing this route and are Rol 2.
+    if (!currentUser.value || currentUser.value.rol !== 2) {
         router.push({ name: 'dashboard' })
     }
 })
-const adminTecnico = ref({ nombre: '', apellidos: '', correo: '', password: '' })
-const tecnicos = ref([{ nombre: '', apellidos: '', correo: '', numeroEmpleado: '' }])
-const addTecnico = () => { tecnicos.value.push({ nombre: '', apellidos: '', correo: '', numeroEmpleado: '' }) }
-const removeTecnico = (index: number) => { if (tecnicos.value.length > 1) tecnicos.value.splice(index, 1) }
-const completeOnboarding = async () => {
+
+// form state for Admin Tecnico (Rol 1)
+const adminTecnico = ref({
+    nombre: '',
+    apellidos: '',
+    correo: '',
+    password: ''
+})
+
+// form state for Tecnicos (Rol 3)
+const tecnicos = ref([
+    { nombre: '', apellidos: '', correo: '', numeroEmpleado: '' }
+])
+
+const addTecnico = () => {
+    tecnicos.value.push({ nombre: '', apellidos: '', correo: '', numeroEmpleado: '' })
+}
+
+const removeTecnico = (index: number) => {
+    if (tecnicos.value.length > 1) {
+        tecnicos.value.splice(index, 1)
+    }
+}
+
+const completeOnboarding = () => {
+    // 1. Basic Validation could go here
     if (!adminTecnico.value.nombre || !adminTecnico.value.correo) {
-        toast.error('El Administrador Técnico requiere al menos nombre y correo.')
+        alert('El Administrador Técnico requiere al menos nombre y correo.')
         return
     }
-    try {
-        await client.post('/usuarios', { nombre: adminTecnico.value.nombre, apellidos: adminTecnico.value.apellidos, email: adminTecnico.value.correo, password: adminTecnico.value.password || 'password', rol: 1, numero_empleado: 'ADM-001' })
-        for (const tech of tecnicos.value) {
-            if (tech.nombre || tech.correo) {
-                await client.post('/usuarios', { nombre: tech.nombre, apellidos: tech.apellidos || '', email: tech.correo || `tech-${Date.now()}@tmp.com`, password: 'password', rol: 3, numero_empleado: tech.numeroEmpleado || `EMP-${Date.now()}` })
-            }
+
+    // 2. Simulate saving users to mockUsers
+    const dependencyId = currentUser.value?.idDependencia || 0
+    
+    // Auto-generate IDs
+    let nextId = mockUsers.length > 0 ? Math.max(...mockUsers.map((u: Usuario) => u.idUsuario)) + 1 : 1
+
+    // Add Admin Tecnico
+    mockUsers.push({
+        idUsuario: nextId++,
+        idDependencia: dependencyId,
+        numeroEmpleado: `ADM-${nextId}`, // Simulated employee number
+        rol: 1, // Admin Tecnico
+        nombre: adminTecnico.value.nombre,
+        apellidos: adminTecnico.value.apellidos,
+        correo: adminTecnico.value.correo,
+        password: adminTecnico.value.password || '',
+        estado: 1,
+        fechaCreacion: new Date().toISOString().split('T')[0] || '',
+        ultimoAcceso: ''
+    })
+
+    // Add Tecnicos
+    tecnicos.value.forEach(tech => {
+        if (tech.nombre || tech.correo) { // Only add if they typed something
+            mockUsers.push({
+                idUsuario: nextId++,
+                idDependencia: dependencyId,
+                numeroEmpleado: tech.numeroEmpleado || `EMP-${nextId}`,
+                rol: 3, // Tecnico
+                nombre: tech.nombre,
+                apellidos: tech.apellidos || '',
+                correo: tech.correo || '',
+                estado: 1,
+                fechaCreacion: new Date().toISOString().split('T')[0] || '',
+                ultimoAcceso: ''
+            })
         }
-        toast.success('¡Configuración completada!')
-        router.push({ name: 'dashboard' })
-    } catch(e:any){ toast.error(e?.response?.data?.message || 'Error') }
+    })
+
+    // 3. Simulate updating currentUser isFirstLogin=false could happen here
+    // currentUser.value.isFirstLogin = false
+
+    // 4. Redirect to Dashboard
+    alert('¡Configuración completada exitosamente!')
+    router.push({ name: 'dashboard' })
 }
 </script>
 

@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
 import { storeToRefs } from 'pinia'
-import client from '../../api/client'
-import { onMounted } from 'vue'
+import { apiFetch } from '../../api/apiClient'
 import {
     ChevronLeft,
     ChevronRight,
@@ -19,28 +18,41 @@ const router = useRouter()
 const authStore = useAuthStore()
 const { currentUser } = storeToRefs(authStore)
 
-if (!currentUser.value || (currentUser.value?.rol !== 1 && currentUser.value?.rol !== 3)) {
+if (!currentUser.value || (currentUser.value.rol !== 1 && currentUser.value.rol !== 2 && currentUser.value.rol !== 3)) {
     router.replace({ name: 'dashboard' })
 }
 
-const idDep = (currentUser.value as any)?.idDependencia ?? (currentUser.value as any)?.dependencia_id
-const rawTickets = ref<any[]>([])
-const rawServices = ref<any[]>([])
-const rawReportes = ref<any[]>([])
-const rawUsers = ref<any[]>([])
-onMounted(async ()=>{
+const idDep = currentUser.value?.idDependencia
+
+// State for real API data
+const realTickets = ref<any[]>([])
+const realServices = ref<any[]>([])
+const realReports = ref<any[]>([])
+const realUsers = ref<any[]>([])
+const isLoading = ref(true)
+
+const fetchHistoryData = async () => {
+    isLoading.value = true
     try {
         const [tRes, sRes, rRes, uRes] = await Promise.all([
-            client.get('/tickets', { params:{ per_page:100 } }).then(r=>r.data).catch(()=>({data:[]})),
-            client.get('/servicios', { params:{ per_page:100 } }).then(r=>r.data).catch(()=>({data:[]})),
-            client.get('/reportes', { params:{ per_page:100 } }).then(r=>r.data).catch(()=>({data:[]})),
-            client.get('/usuarios', { params:{ per_page:100 } }).then(r=>r.data).catch(()=>({data:[]})),
+            apiFetch('/tickets').catch(() => ({ data: [] })),
+            apiFetch('/servicios').catch(() => ({ data: [] })),
+            apiFetch('/reportes').catch(() => ({ data: [] })),
+            apiFetch('/usuarios').catch(() => ({ data: [] }))
         ])
-        rawTickets.value = tRes.data || tRes || []
-        rawServices.value = sRes.data || sRes || []
-        rawReportes.value = rRes.data || rRes || []
-        rawUsers.value = uRes.data || uRes || []
-    } catch {}
+        if (tRes.data) realTickets.value = tRes.data
+        if (sRes.data) realServices.value = sRes.data
+        if (rRes.data) realReports.value = rRes.data
+        if (uRes.data) realUsers.value = uRes.data
+    } catch (error) {
+        console.error('Error al cargar historial:', error)
+    } finally {
+        isLoading.value = false
+    }
+}
+
+onMounted(() => {
+    fetchHistoryData()
 })
 
 // State for calendar
@@ -122,41 +134,41 @@ interface HistoryItem {
 
 // Filter and map all data globally for this user's enterprise
 const allTickets = computed<HistoryItem[]>(() => {
-    return rawTickets.value
-        .filter((t:any) => (t.dependencia_id ?? t.idDependencia) === idDep)
+    return realTickets.value
+        .filter(t => !idDep || t.idDependencia === idDep)
         .map(t => ({
             id: t.id,
             folio: t.folio,
-            worker: t.atendio || t.solicitante || t.usuario_asignado_id || '',
+            worker: t.atendio || t.solicitante || 'Sin asignar',
             description: t.asunto,
             status: t.estatus,
             type: 'Ticket',
             route: 'ticket-detail',
-            dateStr: (t.fecha_solicitud || t.fechaSolicitud) as string
+            dateStr: (t.fechaSolicitud || '').split('T')[0]
         }))
 })
 
 const allServices = computed<HistoryItem[]>(() => {
-    return rawServices.value
-        .filter((s:any) => (s.dependencia_id ?? s.idDependencia) === idDep)
+    return realServices.value
+        .filter(s => !idDep || s.idDependencia === idDep)
         .map(s => ({
             id: s.id,
             folio: s.folio,
-            worker: s.asignadoA || s.usuario_asignado_id || 'Sin asignar',
+            worker: s.asignadoA || 'Sin asignar',
             description: s.asunto,
             status: s.estatus,
             type: 'Servicio',
             route: 'service-detail',
-            dateStr: (s.fecha_vencimiento || s.fechaVencimiento) as string
+            dateStr: (s.fechaVencimiento || s.fechaAsignacion || '').split('T')[0]
         }))
 })
 
 const allReports = computed<HistoryItem[]>(() => {
-    return rawReportes.value
-        .filter((r:any) => (r.dependencia_id ?? r.idDependencia) === idDep)
+    return realReports.value
+        .filter(r => !idDep || r.idDependencia === idDep)
         .map(r => {
-            const creator = rawUsers.value.find((u:any) => (u.id ?? u.idUsuario) === (r.creado_por ?? r.creadoPor))
-            const workerName = creator ? `${creator.nombre} ${creator.apellidos}` : 'Usuario Desconocido'
+            const creator = realUsers.value.find(u => u.idUsuario === r.creadoPor || u.id === r.creadoPor)
+            const workerName = creator ? `${creator.nombre} ${creator.apellidos}` : 'Usuario'
             return {
                 id: r.idReporte,
                 folio: r.folio,
@@ -165,7 +177,7 @@ const allReports = computed<HistoryItem[]>(() => {
                 status: r.estatusReporte,
                 type: 'Reporte',
                 route: 'report-detail',
-                dateStr: (r.fechaElaboracion.split('T')[0]) as string
+                dateStr: (r.fechaElaboracion || '').split('T')[0]
             }
         })
 })

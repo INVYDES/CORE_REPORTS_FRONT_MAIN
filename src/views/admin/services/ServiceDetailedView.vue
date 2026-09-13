@@ -1,15 +1,18 @@
 <script setup lang="ts">
-// @ts-nocheck
     import { ref, onMounted } from 'vue'
     import { useRoute, useRouter } from 'vue-router'
-    import { ArrowLeft, User, Briefcase, Calendar, Clock, CheckCircle2, AlertCircle} from 'lucide-vue-next'
-    import client from '../../../api/client'
+    import { ArrowLeft, User, Briefcase, Calendar, Clock, CheckCircle2, AlertCircle, FileText, FileEdit } from 'lucide-vue-next'
+
+    import type { Service } from '../../../data/mockServicios'
     import { useAuthStore } from '../../../stores/authStore'
     import { storeToRefs } from 'pinia'
-
+    import { apiFetch } from '../../../api/apiClient'
+    
+    // Store
     const authStore = useAuthStore()
     const { currentUser } = storeToRefs(authStore)
 
+    // Setup Router
     const route = useRoute()
     const router = useRouter()
 
@@ -17,89 +20,71 @@
         router.back()
     }
 
+    // Navegar directamente al creador de reportes prellenando este servicio
+    const generarReporte = () => {
+        if (!service.value) return
+        router.push({
+            name: 'reports-new',
+            query: {
+                tipo: 'Servicio Programado',
+                id: service.value.id
+            }
+        })
+    }
+
     const serviceId = Number(route.params.id)
-    const service = ref<any>(null)
-    const technicians = ref<any[]>([])
-    const saving = ref(false)
+    const service = ref<Service | null>(null)
+    const associatedReport = ref<any | null>(null)
+    const isLoading = ref(true)
+    const isUpdating = ref(false)
+    const availableTechnicians = ref<any[]>([])
+    const selectedTechnician = ref('')
 
-    const statusLabel = (code: string) => ({ programado: 'Programado', en_proceso: 'En Proceso', realizado: 'Realizado', vencido: 'Vencido' } as any)[code] || code || '—'
-    const priorityLabel = (code: string | null) => ({ alta: 'Alta', media: 'Media', baja: 'Baja' } as any)[code || ''] || code || '—'
-    const fmt = (iso?: string | null) => {
-        if (!iso) return ''
-        const d = new Date(iso)
-        return isNaN(d.getTime()) ? String(iso).replace('T', ' ').slice(0, 16) : d.toLocaleString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-    }
-
-    const applyService = (raw: any) => {
-        const dep = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-        if (raw.dependencia_id !== undefined && dep !== undefined && raw.dependencia_id !== dep) {
-            service.value = null
-            return
-        }
-        service.value = {
-            id: raw.id,
-            folio: raw.folio,
-            asunto: raw.asunto,
-            descripcion: raw.descripcion || '',
-            solicitante: raw.solicitante || '—',
-            cargo: raw.cargo || '',
-            estatus: statusLabel(raw.estatus),
-            prioridad: priorityLabel(raw.prioridad),
-            asignadoA: raw.asignado ? `${raw.asignado.nombre || ''} ${raw.asignado.apellidos || ''}`.trim() : '',
-            usuarioAsignadoId: raw.usuario_asignado_id ?? null,
-            fechaAsignacion: fmt(raw.fecha_asignacion),
-            fechaVencimiento: fmt(raw.fecha_vencimiento),
-            historialModificaciones: [],
+    const editarReporte = () => {
+        if (associatedReport.value) {
+            router.push({ name: 'report-edit', params: { id: associatedReport.value.idReporte || associatedReport.value.id } })
+        } else {
+            generarReporte()
         }
     }
 
-    onMounted(async () => {
+    const fetchService = async () => {
+        isLoading.value = true
         try {
-            const res = await client.get(`/servicios/${serviceId}`).then(r => r.data)
-            applyService(res.data || res)
-        } catch {
+            const [res, repRes] = await Promise.all([
+                apiFetch(`/servicios/${serviceId}`),
+                apiFetch('/reportes').catch(() => ({ data: [] }))
+            ])
+            if (res.data) {
+                service.value = res.data
+                selectedTechnician.value = res.data.asignadoA || ''
+            }
+            if (repRes.data) {
+                associatedReport.value = repRes.data.find((r: any) => r.tipoReporte === 'Servicio Programado' && (r.origenDatosId === serviceId || r.origen_datos_id === serviceId)) || null
+            }
+        } catch (error) {
+            console.error('Error al cargar servicio:', error)
             service.value = null
-        }
-        try {
-            const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            const dep = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-            technicians.value = (Array.isArray(list) ? list : [])
-                .filter((u: any) => u.rol === 3 && (dep === undefined || u.dependencia_id === dep))
-                .map((u: any) => ({ id: u.id, nombre: u.nombre, apellidos: u.apellidos }))
-        } catch {}
-    })
-
-    const selectedTechnician = ref<any>('')
-    const assignService = async () => {
-        const tech = technicians.value.find((t: any) => t.id === Number(selectedTechnician.value))
-        if (!service.value || !tech || saving.value) return
-        saving.value = true
-        try {
-            const wasProgramado = service.value.estatus === 'Programado'
-            const res = await client.put(`/servicios/${serviceId}`, {
-                usuario_asignado_id: tech.id,
-                estatus: wasProgramado ? 'en_proceso' : undefined,
-            }).then(r => r.data)
-            const raw = res.data || res
-            service.value.asignadoA = `${tech.nombre} ${tech.apellidos}`
-            service.value.usuarioAsignadoId = tech.id
-            if (wasProgramado) service.value.estatus = 'En Proceso'
-            if (raw.estatus) service.value.estatus = statusLabel(raw.estatus)
-            alert(`Servicio asignado exitosamente a ${tech.nombre} ${tech.apellidos}`)
-        } catch (e: any) {
-            alert(e?.response?.data?.message || 'No se pudo asignar el servicio')
         } finally {
-            saving.value = false
+            isLoading.value = false
         }
     }
 
-    const availableTechnicians = technicians
+    const fetchTechnicians = async () => {
+        try {
+            const res = await apiFetch('/tecnicos')
+            if (res.data) {
+                availableTechnicians.value = res.data
+            }
+        } catch (error) {
+            console.error('Error al cargar técnicos:', error)
+        }
+    }
 
     const getUserName = (id: number | null) => {
         if (!id) return 'Sin Asignar'
-        const t = technicians.value.find((u: any) => u.id === id)
-        return t ? `${t.nombre} ${t.apellidos}` : 'Usuario Desconocido'
+        const tech = availableTechnicians.value.find(u => u.id_usuario === id || u.idUsuario === id)
+        return tech ? `${tech.nombre} ${tech.apellidos}` : 'Usuario'
     }
 
     const formatDate = (dateString: string) => {
@@ -107,6 +92,40 @@
         const date = new Date(dateString)
         return date.toLocaleDateString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     }
+   
+    // Assign Service
+    const assignService = async () => {
+        if (!service.value || !selectedTechnician.value) return
+
+        isUpdating.value = true
+        try {
+            const techObj = availableTechnicians.value.find(t => `${t.nombre} ${t.apellidos}` === selectedTechnician.value)
+
+            const res = await apiFetch(`/servicios/${serviceId}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    asignado_a: selectedTechnician.value,
+                    id_tecnico_asignado: techObj ? techObj.idUsuario : null,
+                    estatus: service.value.estatus === 'Programado' ? 'En Proceso' : service.value.estatus
+                })
+            })
+
+            if (res.data) {
+                service.value = res.data
+                alert(`Servicio asignado exitosamente a ${selectedTechnician.value}`)
+            }
+        } catch (error: any) {
+            console.error('Error al asignar servicio:', error)
+            alert(error.message || 'Error al asignar servicio.')
+        } finally {
+            isUpdating.value = false
+        }
+    }
+
+    onMounted(() => {
+        fetchService()
+        fetchTechnicians()
+    })
 
 </script>
 
@@ -117,11 +136,24 @@
             <!-- Header -->
             <header class="ticket-header">
 
-                <!-- Back button -->
-                <button @click="goBack" class="btn-back">
-                    <ArrowLeft :size="18" />
-                    <span>Regresar a la lista</span>
-                </button>
+                <!-- Top action buttons row -->
+                <div class="header-actions-row">
+                    <!-- Back button -->
+                    <button @click="goBack" class="btn-back">
+                        <ArrowLeft :size="18" />
+                        <span>Regresar a la lista</span>
+                    </button>
+
+                    <!-- Generar o Editar Reporte button -->
+                    <button v-if="service.estatus === 'Realizado' || associatedReport" @click="editarReporte" class="btn-generate-report btn-edit-report-accent" title="Editar reporte técnico asociado">
+                        <FileEdit :size="18" />
+                        <span>Editar Reporte</span>
+                    </button>
+                    <button v-else @click="generarReporte" class="btn-generate-report" title="Crear reporte técnico para este servicio">
+                        <FileText :size="18" />
+                        <span>Generar Reporte</span>
+                    </button>
+                </div>
 
                 <!-- Folio -->
                 <div class="header-title">
@@ -245,8 +277,8 @@
                     </div>
 
                     <!--Reasignar ticket/card-->
-                    <!-- Only admin_tecnico, no one else can have acces to this!-->
-                    <div v-if="currentUser?.rol === 1" class="card assignment-card">
+                    <!-- Only admin_tecnico and admin_comercial -->
+                    <div v-if="currentUser?.rol === 1 || currentUser?.rol === 2" class="card assignment-card">
 
                         <!-- Title-->
                         <h3>{{ service.asignadoA ? 'Reasignar Servicio' : 'Asignar Técnico' }}</h3>
@@ -254,7 +286,7 @@
                         <!--Select technician-->
                         <select v-model="selectedTechnician" class="custom-select">
                             <option value="" disabled>Selecciona un técnico...</option>
-                            <option v-for="tech in availableTechnicians" :key="tech.id" :value="tech.id">
+                            <option v-for="tech in availableTechnicians" :key="tech.idUsuario" :value="`${tech.nombre} ${tech.apellidos}`">
                                 {{ tech.nombre }} {{ tech.apellidos }}
                             </option>
                         </select>
@@ -292,6 +324,46 @@
 
 .ticket-header {
     margin-bottom: 1.25rem;
+}
+
+.header-actions-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.btn-generate-report {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.55rem 1.15rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.btn-generate-report:hover {
+    background: #1d4ed8;
+}
+
+.btn-edit-report-accent {
+    background: #059669;
+}
+.btn-edit-report-accent:hover {
+    background: #047857;
+}
+
+.btn-generate-report:active {
+    transform: scale(0.98);
 }
 
 .btn-back {

@@ -1,23 +1,22 @@
 <script setup lang="ts">
-// @ts-nocheck
-    import { ref, onMounted, computed } from 'vue'
+    import { ref, computed, onMounted } from 'vue'
     import { useRouter } from 'vue-router'
-
-    // Import session
-    import { useAuthStore } from '../../../stores/authStore';
-    import { storeToRefs } from 'pinia';
+    import { useAuthStore } from '../../../stores/authStore'
+    import { storeToRefs } from 'pinia'
+    import { apiFetch } from '../../../api/apiClient'
+    import { Star, FileEdit, ChevronRight } from 'lucide-vue-next'
     
     // Store
-    const authStore = useAuthStore();
-    const { currentUser } = storeToRefs(authStore);
-
-import client from '../../../api/client'
-    import { Star } from 'lucide-vue-next';
-
+    const authStore = useAuthStore()
+    const { currentUser } = storeToRefs(authStore)
     const router = useRouter()
 
-    // Role-based access: only tech roles (1: Admin Técnico, 3: Técnico) can view reports
-    if (!currentUser.value || (currentUser.value?.rol !== 1 && currentUser.value?.rol !== 3)) {
+    const openEditReport = (idReporte: number) => {
+        router.push({ name: 'report-edit', params: { id: idReporte } })
+    }
+
+    // Role-based access: tech roles (1: Admin Técnico, 3: Técnico) and commercial admin (2) can view reports
+    if (!currentUser.value || (currentUser.value.rol !== 1 && currentUser.value.rol !== 2 && currentUser.value.rol !== 3)) {
         router.push({ name: 'dashboard' })
     }
 
@@ -25,115 +24,116 @@ import client from '../../../api/client'
     const filterTipo = ref('Todos') // 'Todos', 'Ticket', 'Servicio Programado'
     const dateFilter = ref('')
 
-    const reports = ref<any[]>([])
+    const reportes = ref<any[]>([])
+    const tickets = ref<any[]>([])
+    const services = ref<any[]>([])
     const users = ref<any[]>([])
-    const surveyIds = ref<Set<number>>(new Set())
+    const isLoading = ref(true)
 
-    const tipoLabel = (code: string) => ({ ticket: 'Ticket', servicio: 'Servicio Programado', libre: 'Libre' } as any)[code] || code
-    const estatusLabel = (code: string) => ({ finalizado: 'Cerrado / Trabajo Finalizado', abierto: 'Abierto / Trabajo Parcial', parcial: 'Abierto / Trabajo Parcial', descartado: 'Descartado / Cancelado' } as any)[code] || code
-    const fmtShort = (iso?: string | null) => (iso ? String(iso).replace('T', ' ').slice(0, 16) : '')
+    const fetchData = async () => {
+        isLoading.value = true
+        try {
+            const [repRes, tRes, sRes, uRes] = await Promise.all([
+                apiFetch('/reportes'),
+                apiFetch('/tickets').catch(() => ({ data: [] })),
+                apiFetch('/servicios').catch(() => ({ data: [] })),
+                apiFetch('/usuarios').catch(() => ({ data: [] }))
+            ])
 
-    const getUserName = (id: number | null | undefined) => {
-        if (!id) return 'Sin Asignar'
-        const u = users.value.find((x: any) => x.id === id)
-        return u ? `${u.nombre} ${u.apellidos}`.trim() : 'Usuario Desconocido'
+            if (repRes.data) reportes.value = repRes.data
+            if (tRes.data) tickets.value = tRes.data
+            if (sRes.data) services.value = sRes.data
+            if (uRes.data) users.value = uRes.data
+        } catch (error) {
+            console.error('Error al cargar reportes:', error)
+        } finally {
+            isLoading.value = false
+        }
     }
-    const userName = getUserName
 
-    // Get the Title/Folio of the parent Ticket or Service (resuelto en el fetch con datos reales)
+    onMounted(() => {
+        fetchData()
+    })
+
+    // Get the name of the person who creates it or is responsible
+    const getUserName = (id: number | null) => {
+        if(!id) return 'Sin Asignar'    
+        const user = users.value.find(u => u.idUsuario === id || u.id === id)
+        return user ? `${user.nombre} ${user.apellidos}` : 'Usuario Desconocido'
+    }
+
+    // Get the Title/Folio of the parent Ticket or Service
     const getOrigenDetails = (reporte: any) => {
-        if (reporte.tipoReporte === 'Libre' || !reporte.origenDatosId) {
-            return { folio: 'N/A', asunto: ' Reporte Independiente / Libre ' }
+        if(reporte.tipoReporte === 'Libre' || !reporte.origenDatosId) {
+            return { folio: 'N/A', asunto: ' Reporte Independiente / Libre '}
         }
-        if (reporte.tipoReporte === 'Ticket') {
-            return reporte.originFolio
-                ? { folio: `Ticket: ${reporte.originFolio}`, asunto: reporte.originAsunto }
-                : { folio: 'N/A', asunto: 'Ticket no encontrado' }
+
+        if(reporte.tipoReporte === 'Ticket'){
+            const ticket = tickets.value.find(t => t.id === reporte.origenDatosId)
+            return ticket
+                ? { folio: `Ticket: ${ticket.folio}`, asunto: ticket.asunto }
+                : { folio: `Ticket #${reporte.origenDatosId}`, asunto: 'Ticket' }
         }
-        if (reporte.tipoReporte === 'Servicio Programado') {
-            return reporte.originFolio
-                ? { folio: `Servicio: ${reporte.originFolio}`, asunto: reporte.originAsunto }
-                : { folio: 'N/A', asunto: 'Servicio no encontrado' }
+
+        if(reporte.tipoReporte === 'Servicio Programado'){
+            const service = services.value.find(s=> s.id === reporte.origenDatosId)
+            return service
+                ? { folio: `Servicio: ${service.folio}`, asunto: service.asunto }
+                : { folio: `Servicio #${reporte.origenDatosId}`, asunto: 'Servicio Programado' }
         }
+
         return { folio: '---', asunto: 'Tipo de origen desconocido' }
     }
 
     // Check if the report has a customer survey
-    const hasSurvey = (reporteId: number) => {
-        return surveyIds.value.has(reporteId)
+    const hasSurvey = (reportIdOrObj: any) => {
+        if (typeof reportIdOrObj === 'object' && reportIdOrObj !== null) {
+            return !!(reportIdOrObj?.encuesta && reportIdOrObj?.encuesta?.calificacion)
+        }
+        const rep = reportes.value.find(r => r.idReporte === reportIdOrObj || r.id === reportIdOrObj)
+        return !!(rep?.encuesta && rep?.encuesta?.calificacion)
     }
 
     // Form date for display
     const formatDate = (dateString: string) => {
         if (!dateString) return '---'
         const date = new Date(dateString)
-        return date.toLocaleDateString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit' })
+        return date.toLocaleDateString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit'})
     }
-
-    const loadReports = async () => {
-        try {
-            const res = await client.get('/reportes', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            reports.value = (Array.isArray(list) ? list : []).map((x: any) => {
-                const origen = x.ticket || x.servicio || null
-                return {
-                    idReporte: x.id,
-                    folio: x.folio,
-                    idDependencia: x.dependencia_id,
-                    creadoPor: x.creado_por,
-                    tipoReporte: tipoLabel(x.tipo),
-                    origenDatosId: x.ticket_id ?? x.servicio_id ?? null,
-                    originFolio: origen?.folio || '',
-                    originAsunto: origen?.asunto || '',
-                    fechaElaboracion: fmtShort(x.fecha_inicio),
-                    desarrolloActividades: x.desarrollo || '',
-                    estatusReporte: estatusLabel(x.estatus),
-                }
-            })
-        } catch {}
-    }
-
-    const loadUsers = async () => {
-        try {
-            const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            if (Array.isArray(list)) users.value = list
-        } catch {}
-    }
-
-    const loadSurveys = async () => {
-        try {
-            const res = await client.get('/encuestas', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            if (Array.isArray(list)) surveyIds.value = new Set(list.map((e: any) => e.reporte_id))
-        } catch {}
-    }
-
-    onMounted(() => { loadReports(); loadUsers(); loadSurveys() })
 
     // Filter Engine
     const filteredReports = computed(() => {
-        const depId = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-        return reports.value
-        // Multi-tenant security: only show reports for this enterprise
-        .filter(r => r.idDependencia === undefined || depId === undefined || r.idDependencia === depId)
-        // Filter by type dropdown
-        .filter(r => filterTipo.value === 'Todos' || r.tipoReporte === filterTipo.value)
-        // Search bar (Search by Report Folio or origin folio)
-        .filter(r => {
-            if (!searchQuery.value) return true
-            const query = searchQuery.value.toLowerCase()
-            const folioMatch = (r.folio || '').toLowerCase().includes(query)
-            const originDetails = getOrigenDetails(r)
-            const originMatch = (originDetails?.folio || '').toLowerCase().includes(query)
-            return folioMatch || originMatch
-        })
-        // Filter by Date
-        .filter(r => {
-            if (!dateFilter.value) return true
-            return (r.fechaElaboracion || '').startsWith(dateFilter.value)
-        })
-        .sort((a: any, b: any) => new Date(b.fechaElaboracion).getTime() - new Date(a.fechaElaboracion).getTime())
+        return reportes.value
+            // Multi-tenant security
+            .filter(r => !currentUser.value?.idDependencia || r.idDependencia === currentUser.value.idDependencia)
+            // Punto 3: Restricción de rol (Solo rol 1 y 2 ven todos; otros roles solo ven los propios creados o ejecutados)
+            .filter(r => {
+                if (!currentUser.value || currentUser.value.rol === 1 || currentUser.value.rol === 2) {
+                    return true
+                }
+                const myId = currentUser.value.idUsuario
+                const isCreator = (r.creadoPor === myId) || (r.creado_por === myId)
+                const isExecutor = (r.ejecutoresIds && r.ejecutoresIds.includes(myId)) ||
+                                   (r.ejecutores && r.ejecutores.some((e: any) => e.idUsuario === myId || e.id_usuario === myId))
+                return isCreator || isExecutor
+            })
+            // Filter by type dropdown
+            .filter(r => filterTipo.value === 'Todos' || r.tipoReporte === filterTipo.value)
+            // Search bar
+            .filter(r => {
+                if(!searchQuery.value) return true
+                const query = searchQuery.value.toLowerCase()
+                const folioMatch = (r.folio || '').toLowerCase().includes(query)
+                const originDetails = getOrigenDetails(r)
+                const originMatch = (originDetails?.folio || '').toLowerCase().includes(query) || (originDetails?.asunto || '').toLowerCase().includes(query)
+                return folioMatch || originMatch
+            })
+            // Filter by Date
+            .filter(r => {
+                if (!dateFilter.value) return true
+                return (r.fechaElaboracion || '').startsWith(dateFilter.value)
+            })
+            .sort((a,b) => new Date(b.fechaElaboracion).getTime() - new Date(a.fechaElaboracion).getTime())
     })
 
 </script>
@@ -188,7 +188,7 @@ import client from '../../../api/client'
                 <div class="col-details">DETALLES DEL REPORTE</div>
                 <div class="col-user">ELABORÓ</div>
                 <div class="col-status text-center">ESTATUS</div>
-                <div class="col-action"></div>
+                <div class="col-action text-right">ACCIONES</div>
             </div>
 
             <!-- Filtered Reports: Empty State -->
@@ -205,16 +205,15 @@ import client from '../../../api/client'
             >
                 <!-- Col Folio -->
                 <div class="col-folio">
-                    <span class="font-semibold text-slate-900">{{ report.folio }}</span>
-                    <span class="text-sm text-slate-500 mt-1 block">Elab: {{ formatDate(report.fechaElaboracion) }}</span>
+                    <span class="font-semibold text-slate-900 block">{{ report.folio }}</span>
+                    <span class="text-xs text-slate-500 mt-1 block">Elab: {{ formatDate(report.fechaElaboracion) }}</span>
                 </div>
 
                 <!-- Col details -->
                 <div class="col-details">
-
                     <div class="details-title">
                         <span 
-                            class="badge-origin" 
+                            class="badge-origin flex-shrink-0" 
                             :class="{
                                 'bg-ticket': report.tipoReporte === 'Ticket',
                                 'bg-servicio': report.tipoReporte === 'Servicio Programado',
@@ -223,25 +222,24 @@ import client from '../../../api/client'
                         >
                             {{ report.tipoReporte === 'Libre' ? 'Libre' : getOrigenDetails(report).folio }}
                         </span>
-                        <p></p>
-                        <span class="font-semibold text-slate-900 ml-2">{{ getOrigenDetails(report).asunto }}</span>
+                        <span class="details-asunto" :title="getOrigenDetails(report).asunto">
+                            {{ getOrigenDetails(report).asunto }}
+                        </span>
                     </div>
 
-                    <!-- Activities decription -->
-                    <p class="text-sm text-slate-500 mt-1 block line-clamp-2 m-0">
+                    <!-- Activities description -->
+                    <p class="report-desc" :title="report.desarrolloActividades">
                         {{ report.desarrolloActividades || 'Sin descripción de actividades.' }}
                     </p>
-
                 </div>
 
-
                 <!-- Creado por col-->
-                <div class="col-user">
-                    <span class="text-sm text-slate-900">{{ getUserName(report.creadoPor) }}</span>
+                <div class="col-user" :title="getUserName(report.creadoPor)">
+                    <span>{{ getUserName(report.creadoPor) }}</span>
                 </div>
 
                 <!-- Col Status-->
-                <div class="col-status flex justify-center items-center gap-2">
+                <div class="col-status">
                     <!-- Pill Status -->
                     <span 
                         class="status-pill text-center leading-tight"
@@ -251,7 +249,7 @@ import client from '../../../api/client'
                     </span>
                     <!-- Survey Indicator -->
                     <Star 
-                        :size="18" 
+                        :size="16" 
                         class="flex-shrink-0"
                         :class="hasSurvey(report.idReporte) ? 'text-amber-400' : 'text-slate-300'" 
                         :fill="hasSurvey(report.idReporte) ? 'currentColor' : 'none'"
@@ -259,11 +257,30 @@ import client from '../../../api/client'
                     />
                 </div>
 
-                <!-- Wtf is this? xd I don't remember it ahdashas-->
-                <div class="col-action flex justify-center items-center">
-                    <button @click="router.push({ name: 'report-detail', params: { id: report.idReporte } })" class="bg-transparent border-none text-2xl text-slate-400 cursor-pointer transition hover:text-blue-500 p-0" title="Ver detalles">›</button>
+                <!-- Col Action -->
+                <div class="col-action">
+                    <button 
+                        v-if="report.estatusReporte === 'Cerrado / Trabajo Finalizado'"
+                        type="button"
+                        class="btn-edit-report"
+                        @click.stop="openEditReport(report.idReporte)"
+                        title="Editar reporte finalizado"
+                    >
+                        <FileEdit :size="13" />
+                        <span>Editar Reporte</span>
+                    </button>
+                    <button 
+                        v-else
+                        type="button"
+                        class="btn-edit-report-partial"
+                        @click.stop="openEditReport(report.idReporte)"
+                        title="Editar o completar reporte"
+                    >
+                        <FileEdit :size="13" />
+                        <span>Editar</span>
+                    </button>
+                    <ChevronRight :size="18" class="chevron-arrow" />
                 </div>
-
 
             </div>
         </div>
@@ -290,20 +307,148 @@ import client from '../../../api/client'
 /* Grid Layout for Rows */
 .list-header, .list-item { 
     display: grid; 
-    grid-template-columns: 150px 1fr 180px 150px 40px; 
-    gap: 1rem; 
+    grid-template-columns: 140px minmax(0, 1fr) 150px 140px 155px; 
+    gap: 1.25rem; 
     padding: 1rem 1.5rem; 
+    align-items: center;
 }
-.list-header { background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 0.75rem; font-weight: 700; color: #64748b; letter-spacing: 0.05em; }
-.list-item { border-bottom: 1px solid #e2e8f0; align-items: center; position: relative; }
+.list-header { 
+    background: #f8fafc; 
+    border-bottom: 1px solid #e2e8f0; 
+    font-size: 0.75rem; 
+    font-weight: 700; 
+    color: #64748b; 
+    letter-spacing: 0.05em; 
+}
+.list-item { 
+    border-bottom: 1px solid #e2e8f0; 
+    position: relative; 
+    transition: background 0.15s ease;
+}
 .list-item:last-child { border-bottom: none; }
 .list-item:hover { background: #f8fafc; }
 
-/* Left Red Accent Line (Like your design) */
+/* Left Red Accent Line */
 .list-item::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: transparent; transition: 0.2s; }
-.list-item:hover::before { background: #ef4444; } /* Red accent on hover */
+.list-item:hover::before { background: #3b82f6; } /* Accent on hover */
 
+.col-folio {
+    min-width: 0;
+}
 
+.col-details {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.details-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    margin-bottom: 0.25rem;
+}
+
+.details-asunto {
+    font-weight: 600;
+    color: #0f172a;
+    font-size: 0.92rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.report-desc {
+    color: #64748b;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    margin: 0;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.col-user {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    color: #1e293b;
+}
+
+.col-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.col-action {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.4rem;
+    min-width: 0;
+}
+
+.btn-edit-report {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #ecfdf5;
+    color: #059669;
+    border: 1px solid #a7f3d0;
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-edit-report:hover {
+    background: #059669;
+    color: #ffffff;
+    border-color: #059669;
+}
+
+.btn-edit-report-partial {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-edit-report-partial:hover {
+    background: #2563eb;
+    color: #ffffff;
+    border-color: #2563eb;
+}
+
+.chevron-arrow {
+    color: #94a3b8;
+    transition: transform 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+.list-item:hover .chevron-arrow {
+    color: #3b82f6;
+    transform: translateX(3px);
+}
 
 /* Badges and Pills */
 .badge-origin { padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
@@ -337,7 +482,7 @@ import client from '../../../api/client'
         border: none;
         box-shadow: none;
     }
-    .col-folio, .col-details, .col-user, .col-status {
+    .col-folio, .col-details, .col-user, .col-status, .col-action {
         width: 100%;
         text-align: left;
     }
@@ -345,7 +490,7 @@ import client from '../../../api/client'
         justify-content: flex-start;
     }
     .col-action {
-        display: none;
+        justify-content: flex-start;
     }
     .page-header {
         flex-direction: column;

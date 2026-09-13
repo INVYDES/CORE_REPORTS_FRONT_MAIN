@@ -1,15 +1,18 @@
 <script setup lang="ts">
-// @ts-nocheck
     import { ref, onMounted } from 'vue'
     import { useRoute, useRouter } from 'vue-router'
-    import { ArrowLeft, User, Briefcase, Calendar, Clock, CheckCircle2, AlertCircle} from 'lucide-vue-next'
-    import client from '../../../api/client'
+    import { ArrowLeft, User, Briefcase, Calendar, Clock, CheckCircle2, AlertCircle, FileText, FileEdit } from 'lucide-vue-next'
+
+    import type { Ticket } from '../../../data/mockTickets'
     import { useAuthStore } from '../../../stores/authStore'
     import { storeToRefs } from 'pinia'
-
+    import { apiFetch } from '../../../api/apiClient'
+    
+    // Store
     const authStore = useAuthStore()
     const { currentUser } = storeToRefs(authStore)
 
+    // Setup Router
     const route = useRoute()
     const router = useRouter()
 
@@ -17,84 +20,77 @@
         router.back()
     }
 
+    // Navegar directamente al creador de reportes prellenando este ticket
+    const generarReporte = () => {
+        if (!ticket.value) return
+        router.push({
+            name: 'reports-new',
+            query: {
+                tipo: 'Ticket',
+                id: ticket.value.id
+            }
+        })
+    }
+
     const ticketId = Number(route.params.id)
-    const ticket = ref<any>(null)
-    const technicians = ref<any[]>([])
-    const saving = ref(false)
+    const ticket = ref<Ticket | null>(null)
+    const associatedReport = ref<any | null>(null)
+    const isLoading = ref(true)
+    const isUpdating = ref(false)
+    const availableTechnicians = ref<any[]>([])
+    const selectedTechnician = ref('')
 
-    const statusLabel = (code: string) => ({ abierto: 'Abierto', en_proceso: 'En Proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' } as any)[code] || code || '—'
-    const priorityLabel = (code: string | null) => ({ alta: 'Alta', media: 'Media', baja: 'Baja' } as any)[code || ''] || code || '—'
-    const fmt = (iso?: string | null) => {
-        if (!iso) return ''
-        const d = new Date(iso)
-        return isNaN(d.getTime()) ? String(iso).replace('T', ' ').slice(0, 16) : d.toLocaleString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-    }
-
-    const applyTicket = (raw: any) => {
-        const dep = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-        if (raw.dependencia_id !== undefined && dep !== undefined && raw.dependencia_id !== dep) {
-            ticket.value = null
-            return
-        }
-        ticket.value = {
-            id: raw.id,
-            folio: raw.folio,
-            asunto: raw.asunto,
-            descripcion: raw.descripcion || '',
-            solicitante: raw.solicitante || '—',
-            cargo: raw.cargo || '',
-            estatus: statusLabel(raw.estatus),
-            prioridad: priorityLabel(raw.prioridad),
-            atendio: raw.asignado ? `${raw.asignado.nombre || ''} ${raw.asignado.apellidos || ''}`.trim() : '',
-            usuarioAsignadoId: raw.usuario_asignado_id ?? null,
-            fechaSolicitud: fmt(raw.fecha_solicitud),
-            fechaAtencion: fmt(raw.fecha_atencion),
-            historialModificaciones: [],
+    const editarReporte = () => {
+        if (associatedReport.value) {
+            router.push({ name: 'report-edit', params: { id: associatedReport.value.idReporte || associatedReport.value.id } })
+        } else {
+            generarReporte()
         }
     }
 
-    onMounted(async () => {
+    // Cargar datos reales desde Laravel API
+    const fetchTicket = async () => {
+        isLoading.value = true
         try {
-            const res = await client.get(`/tickets/${ticketId}`).then(r => r.data)
-            applyTicket(res.data || res)
-        } catch {
+            const [res, repRes] = await Promise.all([
+                apiFetch(`/tickets/${ticketId}`),
+                apiFetch('/reportes').catch(() => ({ data: [] }))
+            ])
+            if (res.data) {
+                ticket.value = res.data
+                selectedTechnician.value = res.data.atendio || ''
+            }
+            if (repRes.data) {
+                associatedReport.value = repRes.data.find((r: any) => r.tipoReporte === 'Ticket' && (r.origenDatosId === ticketId || r.origen_datos_id === ticketId)) || null
+            }
+        } catch (error: any) {
+            console.error('Error al cargar ticket:', error)
             ticket.value = null
-        }
-        try {
-            const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            const dep = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-            technicians.value = (Array.isArray(list) ? list : [])
-                .filter((u: any) => u.rol === 3 && (dep === undefined || u.dependencia_id === dep))
-                .map((u: any) => ({ id: u.id, nombre: u.nombre, apellidos: u.apellidos }))
-        } catch {}
-    })
-
-    const selectedTechnician = ref<any>('')
-    const assignTicket = async () => {
-        const tech = technicians.value.find((t: any) => t.id === Number(selectedTechnician.value))
-        if (!ticket.value || !tech || saving.value) return
-        saving.value = true
-        try {
-            const res = await client.patch(`/tickets/${ticketId}/asignar`, { usuario_asignado_id: tech.id }).then(r => r.data)
-            const raw = res.data || res
-            const wasOpen = ticket.value.estatus === 'Abierto'
-            applyTicket(raw)
-            if (wasOpen && ticket.value) ticket.value.estatus = 'En Proceso'
-            alert(`Ticket asignado exitosamente a ${tech.nombre} ${tech.apellidos}`)
-        } catch (e: any) {
-            alert(e?.response?.data?.message || 'No se pudo asignar el ticket')
         } finally {
-            saving.value = false
+            isLoading.value = false
         }
     }
 
-    const availableTechnicians = technicians
+    const fetchTechnicians = async () => {
+        try {
+            const res = await apiFetch('/tecnicos')
+            if (res.data) {
+                availableTechnicians.value = res.data
+            }
+        } catch (error) {
+            console.error('Error al cargar técnicos:', error)
+        }
+    }
+
+    onMounted(() => {
+        fetchTicket()
+        fetchTechnicians()
+    })
 
     const getUserName = (id: number | null) => {
         if (!id) return 'Sin Asignar'
-        const t = technicians.value.find((u: any) => u.id === id)
-        return t ? `${t.nombre} ${t.apellidos}` : 'Usuario Desconocido'
+        const tech = availableTechnicians.value.find(u => u.id_usuario === id || u.idUsuario === id)
+        return tech ? `${tech.nombre} ${tech.apellidos}` : 'Usuario'
     }
 
     const formatDate = (dateString: string) => {
@@ -103,20 +99,70 @@
         return date.toLocaleDateString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     }
 
+    // Guardar asignación real en MySQL
+    const assignTicket = async () => {
+        if (!ticket.value || !selectedTechnician.value || isUpdating.value) return
+
+        isUpdating.value = true
+        try {
+            const techObj = availableTechnicians.value.find(
+                t => `${t.nombre} ${t.apellidos}`.trim() === selectedTechnician.value.trim()
+            )
+
+            const res = await apiFetch(`/tickets/${ticket.value.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    id_tecnico_atendio: techObj ? (techObj.id_usuario || techObj.idUsuario) : null,
+                    atendio: selectedTechnician.value,
+                    estatus: ticket.value.estatus === 'Abierto' ? 'En Proceso' : ticket.value.estatus,
+                    fecha_atencion: new Date().toISOString().split('T')[0]
+                })
+            })
+
+            if (res.data) {
+                ticket.value = res.data
+                selectedTechnician.value = res.data.atendio || ''
+                alert(`¡Ticket asignado exitosamente a ${selectedTechnician.value}!`)
+            }
+        } catch (error: any) {
+            console.error('Error al asignar técnico:', error)
+            alert('Error al asignar el técnico: ' + (error.message || 'Error desconocido'))
+        } finally {
+            isUpdating.value = false
+        }
+    }
 </script>
 
 <template>
     <div class="page-container-detail-ticket">
         
-        <div v-if="ticket">
+        <!-- Estado de carga -->
+        <div v-if="isLoading" class="card" style="text-align: center; padding: 4rem 1rem;">
+            <p style="color: #64748b; font-size: 1.1rem; font-weight: 600;">Cargando ticket desde el servidor...</p>
+        </div>
+
+        <div v-else-if="ticket">
             <!-- Header -->
             <header class="ticket-header">
 
-                <!-- Back button -->
-                <button @click="goBack" class="btn-back">
-                    <ArrowLeft :size="18" />
-                    <span>Regresar a la lista</span>
-                </button>
+                <!-- Top action buttons row -->
+                <div class="header-actions-row">
+                    <!-- Back button -->
+                    <button @click="goBack" class="btn-back">
+                        <ArrowLeft :size="18" />
+                        <span>Regresar a la lista</span>
+                    </button>
+
+                    <!-- Generar o Editar Reporte button -->
+                    <button v-if="ticket.estatus === 'Resuelto' || ticket.estatus === 'Cerrado' || associatedReport" @click="editarReporte" class="btn-generate-report btn-edit-report-accent" title="Editar reporte técnico asociado">
+                        <FileEdit :size="18" />
+                        <span>Editar Reporte</span>
+                    </button>
+                    <button v-else @click="generarReporte" class="btn-generate-report" title="Crear reporte técnico para este ticket">
+                        <FileText :size="18" />
+                        <span>Generar Reporte</span>
+                    </button>
+                </div>
 
                 <!-- Folio -->
                 <div class="header-title">
@@ -249,7 +295,7 @@
                         <!--Select technician-->
                         <select v-model="selectedTechnician" class="custom-select">
                             <option value="" disabled>Selecciona un técnico...</option>
-                            <option v-for="tech in availableTechnicians" :key="tech.id" :value="tech.id">
+                            <option v-for="tech in availableTechnicians" :key="tech.id_usuario || tech.idUsuario" :value="`${tech.nombre} ${tech.apellidos}`">
                                 {{ tech.nombre }} {{ tech.apellidos }}
                             </option>
                         </select>
@@ -287,6 +333,46 @@
 
 .ticket-header {
     margin-bottom: 1.25rem;
+}
+
+.header-actions-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.btn-generate-report {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.55rem 1.15rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.btn-generate-report:hover {
+    background: #1d4ed8;
+}
+
+.btn-edit-report-accent {
+    background: #059669;
+}
+.btn-edit-report-accent:hover {
+    background: #047857;
+}
+
+.btn-generate-report:active {
+    transform: scale(0.98);
 }
 
 .btn-back {

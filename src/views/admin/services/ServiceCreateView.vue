@@ -1,82 +1,95 @@
-<script setup lang = "ts">
-    import { ref, computed, onMounted } from 'vue'
+<script setup lang="ts">
+    import { ref, onMounted } from 'vue'
     import { useRouter } from 'vue-router'
     import { Save } from 'lucide-vue-next'
-
-    import { serviciosApi } from '../../../api/servicios';
-    import { areasApi } from '../../../api/areas';
-    import client from '../../../api/client';
-    import { useToast } from 'vue-toastification';
+    import { useAuthStore } from '../../../stores/authStore'
+    import { storeToRefs } from 'pinia'
+    import { apiFetch } from '../../../api/apiClient'
     
     const router = useRouter()
-    const toast = useToast()
+    const authStore = useAuthStore()
+    const { currentUser } = storeToRefs(authStore)
 
-    const realAreas = ref<any[]>([])
-    const realTechs = ref<any[]>([])
-    const availableSubareas = computed(() => {
-        if (realAreas.value.length) return realAreas.value
-        return []
-    })
-    const availableTechnicians = computed(() => realTechs.value)
-
-    onMounted(async ()=>{
-        try {
-            const res = await areasApi.list()
-            const list = res.data || res
-            const arr = Array.isArray(list) ? list : []
-            realAreas.value = arr.map((a:any)=> ({ idSubdependencia: a.id, idDependencia: a.dependencia_id, nombre: a.nombre }))
-        } catch {}
-        try {
-            const u = await client.get('/usuarios', { params:{ per_page:100 } }).then(r=>r.data)
-            const list = u.data || u
-            realTechs.value = Array.isArray(list) ? list.filter((x:any)=> [1,3].includes(x.rol)).map((x:any)=> ({ idUsuario: x.id, nombre: x.nombre, apellidos: x.apellidos })) : []
-        } catch {}
-    })
-
+    const availableTechnicians = ref<any[]>([])
+    const availableSubareas = ref<any[]>([])
     const isSubmitting = ref(false)
+
+    // Form data
     const formData = ref({
         idSubdependencia: null as number | null,
-        solicitante: '',
-        cargo: '',
+        solicitante: currentUser.value ? `${currentUser.value.nombre} ${currentUser.value.apellidos}` : 'Administrador',
+        cargo: 'Administrador de Operaciones',
         asunto: '',
         prioridad: 'Media',
-        prioridadApi: 'media',
-        asignadoA: '' as string | number, // ahora guarda id
-        categoria: 'preventivo' as string,
-        fechaAsignacion: '',
+        asignadoA: '',
+        fechaAsignacion: new Date().toISOString().split('T')[0],
         fechaVencimiento: '',
         descripcion: ''
     })
 
+    const loadFormData = async () => {
+        try {
+            const [techRes, subRes] = await Promise.all([
+                apiFetch('/tecnicos'),
+                apiFetch('/subdependencias')
+            ])
+            if (techRes.data) availableTechnicians.value = techRes.data
+            if (subRes.data) availableSubareas.value = subRes.data
+        } catch (err) {
+            console.error('Error al cargar datos auxiliares:', err)
+        }
+    }
+
+    onMounted(() => {
+        loadFormData()
+    })
+
     const submitService = async () => {
-        if (isSubmitting.value) return
+        if (!formData.value.asunto.trim() || !formData.value.fechaVencimiento || !formData.value.descripcion.trim()) {
+            alert('Por favor completa el asunto, la fecha de vencimiento y la descripción.')
+            return
+        }
+
         isSubmitting.value = true
         try {
-            const payload:any = {
-                area_id: formData.value.idSubdependencia,
-                solicitante: formData.value.solicitante,
-                cargo: formData.value.cargo,
-                asunto: formData.value.asunto,
-                prioridad: formData.value.prioridad,
-                categoria: formData.value.categoria,
-                fecha_asignacion: formData.value.fechaAsignacion,
-                fecha_vencimiento: formData.value.fechaVencimiento,
-                descripcion: formData.value.descripcion,
-            }
-            if (formData.value.asignadoA) payload.usuario_asignado_id = Number(formData.value.asignadoA)
-            const res = await serviciosApi.create(payload)
-            toast.success(`Servicio ${res.folio} programado`)
+            // Obtener el ID de técnico si fue seleccionado
+            const tech = availableTechnicians.value.find(
+                t => `${t.nombre} ${t.apellidos}`.trim() === formData.value.asignadoA.trim()
+            )
+
+            const res = await apiFetch('/servicios', {
+                method: 'POST',
+                body: JSON.stringify({
+                    id_subdependencia: formData.value.idSubdependencia,
+                    solicitante: formData.value.solicitante,
+                    cargo: formData.value.cargo,
+                    asunto: formData.value.asunto,
+                    prioridad: formData.value.prioridad,
+                    id_tecnico_asignado: tech ? (tech.id_usuario || tech.idUsuario) : null,
+                    asignado_a: formData.value.asignadoA || null,
+                    fecha_asignacion: formData.value.fechaAsignacion,
+                    fecha_vencimiento: formData.value.fechaVencimiento,
+                    descripcion: formData.value.descripcion
+                })
+            })
+
+            const folioCreado = res.data?.folio || 'NUEVO'
+            alert(`¡Servicio programado ${folioCreado} registrado con éxito en MySQL!`)
             router.push({ name: 'schedule-list' })
-        } catch (e:any) {
-            toast.error(e?.response?.data?.message || JSON.stringify(e?.response?.data?.errors) || 'Error al programar servicio')
-        } finally { isSubmitting.value = false }
+        } catch (err: any) {
+            console.error('Error al crear servicio:', err)
+            alert('Error: ' + (err.message || 'No se pudo programar el servicio'))
+        } finally {
+            isSubmitting.value = false
+        }
     }
+
+    // Auto-resize textarea
     const autoResize = (event: Event) => {
         const target = event.target as HTMLTextAreaElement;
-        target.style.height = 'auto'; // Reset height
-        target.style.height = `${target.scrollHeight}px`; // Set to scroll height
+        target.style.height = 'auto';
+        target.style.height = `${target.scrollHeight}px`;
     };
-
 </script>
 <!-------------------------------------------------------------------------------------------------------->
 <template>
@@ -122,21 +135,10 @@
                 </div>
 
                 <div class="form-group">
-                    <label>Categoría *</label>
-                    <select v-model="formData.categoria" class="fat-input select-arrow" required>
-                        <option value="preventivo">Mantenimiento Preventivo</option>
-                        <option value="correctivo">Mantenimiento Correctivo</option>
-                        <option value="instalacion">Instalación</option>
-                        <option value="mejora">Mejora</option>
-                        <option value="diagnostico">Diagnóstico</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
                     <label>Asignar a Técnico</label>
                     <select v-model="formData.asignadoA" class="fat-input select-arrow">
                         <option value="">Sin asignar por ahora</option>
-                        <option v-for="tech in availableTechnicians" :key="tech.idUsuario" :value="tech.idUsuario">
+                        <option v-for="tech in availableTechnicians" :key="tech.idUsuario" :value="`${tech.nombre} ${tech.apellidos}`">
                             {{ tech.nombre }} {{ tech.apellidos }}
                         </option>
                     </select>
@@ -190,9 +192,9 @@
 
                 <div class="form-actions">
                     <button type="button" @click="router.back()" class="btn-cancelar">Cancelar</button>
-                    <button type="submit" class="btn-enviar" :disabled="isSubmitting">
+                    <button type="submit" class="btn-enviar">
                         <Save :size="18" style="margin-right: 8px;"/>
-                        {{ isSubmitting ? 'Programando...' : 'Programar Servicio' }}
+                        Programar Servicio
                     </button>
                 </div>
 

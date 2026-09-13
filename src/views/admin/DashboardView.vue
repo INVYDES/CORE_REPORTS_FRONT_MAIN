@@ -1,60 +1,138 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
 import { storeToRefs } from 'pinia'
-import { dashboardApi } from '../../api/dashboard'
-import client from '../../api/client'
-import { AlertOctagon, CalendarClock, Clock, FileText, PlusCircle, CheckCircle2, Ticket, Activity } from 'lucide-vue-next'
-
-// --- Normalize lowercase API enums into UI labels/colors ---
-const statusLabel = (code?: string | null) => ({
-    abierto: 'Abierto', en_proceso: 'En Proceso', resuelto: 'Resuelto', cerrado: 'Cerrado',
-    programado: 'Programado', realizado: 'Realizado', vencido: 'Vencido',
-    parcial: 'Parcial', finalizado: 'Finalizado', descartado: 'Descartado',
-} as any)[code || ''] || code || ''
-const reportStatusLabel = (code?: string | null) => ({
-    abierto: 'Abierto', parcial: 'Parcial', finalizado: 'Finalizado', descartado: 'Descartado',
-} as any)[code || ''] || code || ''
-const priorityLabel = (code?: string | null) => ({ alta: 'Alta', media: 'Media', baja: 'Baja' } as any)[code || ''] || code || ''
-const tipoLabel = (code?: string | null) => ({ ticket: 'Ticket', servicio: 'Servicio', libre: 'Libre' } as any)[code || ''] || code || ''
-const fmtShort = (iso?: string | null) => (iso ? String(iso).replace('T', ' ').slice(0, 16) : '')
+import { apiFetch } from '../../api/apiClient'
+import { 
+    AlertOctagon, 
+    CalendarClock, 
+    Clock, 
+    FileText, 
+    PlusCircle,
+    CheckCircle2,
+    Ticket,
+    Activity
+} from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const { currentUser } = storeToRefs(authStore)
 
-const unassignedTickets = ref<any[]>([])
-const upcomingServices = ref<any[]>([])
-const recentReports = ref<any[]>([])
-const myPendingTasks = ref<any[]>([])
-const myRecentReports = ref<any[]>([])
+const fullName = currentUser.value ? `${currentUser.value.nombre} ${currentUser.value.apellidos}` : ''
+const userId = currentUser.value?.idUsuario
 
-onMounted(async () => {
+// ==========================================
+// DATOS REALES DESDE LARAVEL API
+// ==========================================
+const realTickets = ref<any[]>([])
+const realServices = ref<any[]>([])
+const realReports = ref<any[]>([])
+const isLoading = ref(true)
+
+const fetchDashboardData = async () => {
+    isLoading.value = true
     try {
-        const dash = await dashboardApi.get()
-        unassignedTickets.value = (dash.tickets_por_asignar || []).slice(0,5).map((t:any)=> ({ id: t.id, folio: t.folio, asunto: t.asunto, prioridad: priorityLabel(t.prioridad), estatus: statusLabel(t.estatus) }))
-        upcomingServices.value = (dash.servicios_proximos || []).slice(0,5).map((s:any)=> ({ id: s.id, folio: s.folio, asunto: s.asunto, estatus: statusLabel(s.estatus), prioridad: priorityLabel(s.prioridad), fechaVencimiento: fmtShort(s.fecha_vencimiento) }))
-        recentReports.value = (dash.actividad_reciente || []).slice(0,5).map((r:any)=> ({ idReporte: r.id, folio: r.folio, tipoReporte: tipoLabel(r.tipo), estatusReporte: reportStatusLabel(r.estatus), fechaElaboracion: fmtShort(r.fecha_inicio) }))
-        if ((currentUser.value as any)?.rol === 3) {
-            const uid = (currentUser.value as any)?.id
-            const [tRes, sRes, rRes] = await Promise.all([
-                client.get('/tickets', { params: { usuario_asignado_id: uid, per_page: 500 } }).then(r=>r.data).catch(()=>({data:[]})),
-                client.get('/servicios', { params: { usuario_asignado_id: uid, per_page: 500 } }).then(r=>r.data).catch(()=>({data:[]})),
-                client.get('/reportes', { params: { creado_por: uid, per_page: 500 } }).then(r=>r.data).catch(()=>({data:[]})),
-            ])
-            const tList = tRes.data || tRes || []
-            const sList = sRes.data || sRes || []
-            const rList = rRes.data || rRes || []
-            const myTix = (Array.isArray(tList)?tList:[]).filter((t:any)=> t.usuario_asignado_id===uid && !['resuelto','cerrado'].includes(t.estatus)).map((t:any)=> ({ id:t.id, type:'Ticket', folio:t.folio, asunto:t.asunto, estatus:statusLabel(t.estatus), prioridad:priorityLabel(t.prioridad), date:fmtShort(t.fecha_solicitud), route:'ticket-detail' }))
-            const mySvc = (Array.isArray(sList)?sList:[]).filter((s:any)=> s.usuario_asignado_id===uid && !['realizado'].includes(s.estatus)).map((s:any)=> ({ id:s.id, type:'Servicio', folio:s.folio, asunto:s.asunto, estatus:statusLabel(s.estatus), prioridad:priorityLabel(s.prioridad), date:fmtShort(s.fecha_vencimiento), route:'service-detail' }))
-            myPendingTasks.value = [...myTix, ...mySvc].sort((a:any,b:any)=> new Date(a.date.replace(' ', 'T') || b.date).getTime()-new Date(b.date.replace(' ', 'T') || a.date).getTime())
-            myRecentReports.value = (Array.isArray(rList)?rList:[]).filter((r:any)=> r.creado_por===uid).slice(0,5).map((r:any)=> ({ idReporte:r.id, folio:r.folio, estatusReporte:reportStatusLabel(r.estatus), fechaElaboracion:fmtShort(r.fecha_inicio) }))
-        }
-    } catch {}
+        const [tRes, sRes, rRes] = await Promise.all([
+            apiFetch('/tickets').catch(() => ({ data: [] })),
+            apiFetch('/servicios').catch(() => ({ data: [] })),
+            apiFetch('/reportes').catch(() => ({ data: [] }))
+        ])
+        if (tRes.data) realTickets.value = tRes.data
+        if (sRes.data) realServices.value = sRes.data
+        if (rRes.data) realReports.value = rRes.data
+    } catch (error) {
+        console.error('Error al cargar datos de dashboard:', error)
+    } finally {
+        isLoading.value = false
+    }
+}
+
+onMounted(() => {
+    fetchDashboardData()
 })
 
-const navigateTo = (routeName: string, params?: any) => { router.push({ name: routeName, params }) }
+// Global filter usando datos reales
+const userTickets = computed(() => realTickets.value)
+const userServices = computed(() => realServices.value)
+const userReports = computed(() => realReports.value)
+
+// ==========================================
+// ADMIN VIEW COMPUTEDS (Roles 1 & 2)
+// ==========================================
+
+// Tickets por Asignar (atendio empty, not resolved/closed)
+const unassignedTickets = computed(() => {
+    return userTickets.value.filter(t => 
+        (t.atendio === '' || !t.atendio) && 
+        t.estatus !== 'Resuelto' && 
+        t.estatus !== 'Cerrado'
+    ).slice(0, 5) // top 5
+})
+
+// Servicios Próximos (Programado/En Proceso, sorted by date ascending)
+const upcomingServices = computed(() => {
+    return userServices.value
+        .filter(s => s.estatus === 'Programado' || s.estatus === 'En Proceso')
+        .sort((a, b) => new Date(a.fechaVencimiento).getTime() - new Date(b.fechaVencimiento).getTime())
+        .slice(0, 5)
+})
+
+// Actividad Reciente (top 5 recent reports)
+const recentReports = computed(() => {
+    return [...userReports.value]
+        .sort((a, b) => new Date(b.fechaElaboracion).getTime() - new Date(a.fechaElaboracion).getTime())
+        .slice(0, 5)
+})
+
+// ==========================================
+// TECHNICIAN VIEW COMPUTEDS (Role 3)
+// ==========================================
+
+// Mis Tareas Pendientes (Tickets & Services assigned to me, not closed)
+const myPendingTasks = computed(() => {
+    const myTix = userTickets.value
+        .filter(t => t.atendio === fullName && t.estatus !== 'Resuelto' && t.estatus !== 'Cerrado')
+        .map(t => ({
+            id: t.id,
+            type: 'Ticket',
+            folio: t.folio,
+            asunto: t.asunto,
+            estatus: t.estatus,
+            prioridad: t.prioridad,
+            date: t.fechaSolicitud,
+            route: 'ticket-detail'
+        }))
+
+    const mySvc = userServices.value
+        .filter(s => s.asignadoA === fullName && s.estatus !== 'Realizado' && s.estatus !== 'Vencido') // Wait, if vencido they still need to do it? Let's show Vencidos too.
+        .map(s => ({
+            id: s.id,
+            type: 'Servicio',
+            folio: s.folio,
+            asunto: s.asunto,
+            estatus: s.estatus,
+            prioridad: s.prioridad,
+            date: s.fechaVencimiento,
+            route: 'service-detail'
+        }))
+
+    return [...myTix, ...mySvc].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+})
+
+// Mis Últimos Reportes
+const myRecentReports = computed(() => {
+    return userReports.value
+        .filter(r => r.creadoPor === userId || (r.ejecutoresIds && r.ejecutoresIds.includes(userId!)))
+        .sort((a, b) => new Date(b.fechaElaboracion).getTime() - new Date(a.fechaElaboracion).getTime())
+        .slice(0, 5)
+})
+
+// Helper functions for UI
+const navigateTo = (routeName: string, params?: any) => {
+    router.push({ name: routeName, params })
+}
+
 const getPriorityClass = (priority: string) => {
     switch (priority) {
         case 'Crítica': return 'bg-red-100 text-red-700'
@@ -64,6 +142,7 @@ const getPriorityClass = (priority: string) => {
         default: return 'bg-slate-100 text-slate-700'
     }
 }
+
 const getStatusClass = (status: string) => {
     if (status === 'Abierto' || status === 'Programado') return 'bg-blue-100 text-blue-700'
     if (status === 'En Proceso' || status === 'En Progreso') return 'bg-purple-100 text-purple-700'
@@ -73,8 +152,7 @@ const getStatusClass = (status: string) => {
 </script>
 
 <template>
-    <div class="dashboard-root px-4 mx-auto w-full max-w-7xl">
-      <template v-if="currentUser">
+    <div class="dashboard-root px-4 mx-auto w-full max-w-7xl" v-if="currentUser">
         
         <!-- ========================================== -->
         <!-- ADMIN VIEW (Roles 1 & 2)                  -->
@@ -116,7 +194,7 @@ const getStatusClass = (status: string) => {
                         </div>
                     </div>
                     <div class="card-footer">
-                        <button v-if="currentUser.rol === 1" class="text-blue-600 font-medium text-sm hover:underline" @click="navigateTo('tickets')">Ver todos los tickets &rarr;</button>
+                        <button v-if="currentUser?.rol === 1 || (currentUser?.rol as number) === 3" class="text-blue-600 font-medium text-sm hover:underline" @click="navigateTo('tickets')">Ver todos los tickets &rarr;</button>
                     </div>
                 </div>
 
@@ -150,7 +228,7 @@ const getStatusClass = (status: string) => {
                         </div>
                     </div>
                     <div class="card-footer">
-                        <button v-if="currentUser.rol === 1" class="text-blue-600 font-medium text-sm hover:underline" @click="navigateTo('schedule-list')">Ver cronograma &rarr;</button>
+                        <button v-if="currentUser?.rol === 1 || (currentUser?.rol as number) === 3" class="text-blue-600 font-medium text-sm hover:underline" @click="navigateTo('schedule-list')">Ver cronograma &rarr;</button>
                     </div>
                 </div>
 
@@ -185,7 +263,7 @@ const getStatusClass = (status: string) => {
                         </div>
                     </div>
                     <div class="card-footer">
-                        <button v-if="currentUser.rol === 1" class="text-blue-600 font-medium text-sm hover:underline" @click="navigateTo('reports')">Ir a reportes &rarr;</button>
+                        <button v-if="currentUser?.rol === 1 || (currentUser?.rol as number) === 3" class="text-blue-600 font-medium text-sm hover:underline" @click="navigateTo('reports')">Ir a reportes &rarr;</button>
                     </div>
                 </div>
             </div>
@@ -285,7 +363,6 @@ const getStatusClass = (status: string) => {
                 </div>
             </div>
         </div>
-      </template>
     </div>
 </template>
 

@@ -268,16 +268,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watchEffect, ref, onMounted, onUnmounted, watch } from 'vue'
-import { Clock, ArrowRight, BarChart2, Activity } from 'lucide-vue-next'
+import { computed, watchEffect, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
-import client from '../../api/client'
-import { mockReportes, type Reporte } from '../../data/mockReportes'
-import { mockTickets, type Ticket } from '../../data/mockTickets'
-import { mockServices, type Service } from '../../data/mockServicios'
-import { mockUsers, type Usuario } from '../../data/mockUsers'
-import { mockEncuestas } from '../../data/mockEncuestas'
+import type { Reporte } from '../../data/mockReportes'
+import type { Ticket } from '../../data/mockTickets'
+import type { Service } from '../../data/mockServicios'
+import { apiFetch } from '../../api/apiClient'
 import html2pdf from 'html2pdf.js'
 
 // Initialize router and auth
@@ -299,36 +296,55 @@ const exportPDF = () => {
     html2pdf().set(opt).from(dashboardContent.value).save();
 }
 
-// 1. Security Redirect - espera a que cargue currentUser
+// 1. Security Redirect
 watchEffect(() => {
-    if (!currentUser.value) return
-    if (currentUser.value?.rol !== 1 && currentUser.value?.rol !== 2) {
+    if (!currentUser.value) {
+        router.push({ name: 'login' })
+        return
+    }
+    
+    // Admin only (Roles 1 and 2)
+    if (currentUser.value.rol !== 1 && currentUser.value.rol !== 2) {
         router.push({ name: 'dashboard' })
     }
 })
 
 // Safe fallback for idDependencia during initial load/redirect
-const myCompanyId = computed(() => (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia ?? -1)
+const myCompanyId = computed(() => currentUser.value?.idDependencia ?? -1)
 
 const timeFilter = ref('Este Mes')
 const selectedTechnician = ref<number | null>(null)
 
-const analyticsData = ref<any>(null)
-const fetchAnalytics = async ()=>{
+// API Data State
+const realReports = ref<any[]>([])
+const realTickets = ref<any[]>([])
+const realServices = ref<any[]>([])
+const realUsers = ref<any[]>([])
+
+const fetchAnalysisData = async () => {
     try {
-        const params:any = {}
-        if (selectedTechnician.value) params.tecnico = selectedTechnician.value
-        const res = await client.get('/analytics/all', { params }).then(r=>r.data)
-        analyticsData.value = res
-    } catch {}
+        const [repRes, tRes, sRes, uRes] = await Promise.all([
+            apiFetch('/reportes').catch(() => ({ data: [] })),
+            apiFetch('/tickets').catch(() => ({ data: [] })),
+            apiFetch('/servicios').catch(() => ({ data: [] })),
+            apiFetch('/usuarios').catch(() => ({ data: [] }))
+        ])
+        if (repRes.data) realReports.value = repRes.data
+        if (tRes.data) realTickets.value = tRes.data
+        if (sRes.data) realServices.value = sRes.data
+        if (uRes.data) realUsers.value = uRes.data
+    } catch (error) {
+        console.error('Error al cargar datos para análisis:', error)
+    }
 }
-onMounted(fetchAnalytics)
-watch([timeFilter, selectedTechnician], fetchAnalytics)
 
 // Responsive chart height
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1200)
 const onResize = () => { windowWidth.value = window.innerWidth }
-onMounted(() => window.addEventListener('resize', onResize))
+onMounted(() => {
+    window.addEventListener('resize', onResize)
+    fetchAnalysisData()
+})
 onUnmounted(() => window.removeEventListener('resize', onResize))
 
 const chartHeight = computed(() => {
@@ -368,27 +384,20 @@ const checkDateFilter = (dateStr: string | undefined): boolean => {
 }
 
 // 2. Original Filtered Data (by company and time filter)
-const myOriginalReports = computed(() => mockReportes.filter((r: Reporte) => r.idDependencia === myCompanyId.value && checkDateFilter(r.fechaElaboracion)))
-// Note: Tickets y Servicios also filtered by date. Some dashboards keep base tickets un-time-filtered, but here we sync them. 
-const myOriginalTickets = computed(() => mockTickets.filter((t: Ticket) => t.idDependencia === myCompanyId.value && checkDateFilter(t.fechaSolicitud)))
-const myOriginalServices = computed(() => mockServices.filter((s: Service) => s.idDependencia === myCompanyId.value && checkDateFilter(s.fechaAsignacion)))
-
-const realTechs = ref<any[]>([])
-onMounted(async () => {
-    try {
-        const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r=>r.data)
-        const list = res.data || res
-        realTechs.value = Array.isArray(list) ? list.filter((u:any)=> [1,3].includes(u.rol)).map((u:any)=> ({ id: u.id, nombre: `${u.nombre} ${u.apellidos}` })) : []
-    } catch {}
-})
+const myOriginalReports = computed(() => realReports.value.filter((r: Reporte) => (!myCompanyId.value || r.idDependencia === myCompanyId.value) && checkDateFilter(r.fechaElaboracion)))
+const myOriginalTickets = computed(() => realTickets.value.filter((t: Ticket) => (!myCompanyId.value || t.idDependencia === myCompanyId.value) && checkDateFilter(t.fechaSolicitud)))
+const myOriginalServices = computed(() => realServices.value.filter((s: Service) => (!myCompanyId.value || s.idDependencia === myCompanyId.value) && checkDateFilter(s.fechaAsignacion || s.fechaVencimiento)))
 
 const availableTechnicians = computed(() => {
-    if (realTechs.value.length) return realTechs.value
     const techIds = new Set<number>()
     myOriginalReports.value.forEach(r => {
-        r.ejecutoresIds.forEach(id => techIds.add(id))
+        if (r.ejecutoresIds && Array.isArray(r.ejecutoresIds)) {
+            r.ejecutoresIds.forEach((id: number) => techIds.add(id))
+        }
     })
-    return mockUsers.filter(u => techIds.has(u.idUsuario)).map(u => ({ id: u.idUsuario, nombre: `${u.nombre} ${u.apellidos}` }))
+    return realUsers.value
+        .filter(u => techIds.has(u.idUsuario || u.id) || u.rol === 3)
+        .map(u => ({ id: u.idUsuario || u.id, nombre: `${u.nombre} ${u.apellidos}` }))
 })
 
 // 3. KPI Filtered Scopes (General vs Individual)
@@ -412,45 +421,23 @@ const myServices = computed(() => {
 })
 
 
-const totalReportes = computed(() => {
-    const c = analyticsData.value?.conteo
-    if (c && c.cantidad_reportes_generados !== undefined) return Number(c.cantidad_reportes_generados) || 0
-    return myReports.value.length
-})
+const totalReportes = computed(() => myReports.value.length)
 
 // 4. KPI Calculations (Volumes)
-const totalTicketsReportes = computed(() => {
-    const v = analyticsData.value?.volumen
-    if (Array.isArray(v) && v.length) {
-        return (v.find((x: any) => x.tipo === 'ticket')?.total || 0)
-    }
-    return myReports.value.filter(r => r.tipoReporte === 'Ticket').length
-})
-const totalServiciosReportes = computed(() => {
-    const v = analyticsData.value?.volumen
-    if (Array.isArray(v) && v.length) {
-        return (v.find((x: any) => x.tipo === 'servicio')?.total || 0)
-    }
-    return myReports.value.filter(r => r.tipoReporte === 'Servicio Programado').length
-})
-const totalLibresReportes = computed(() => {
-    const v = analyticsData.value?.volumen
-    if (Array.isArray(v) && v.length) {
-        return (v.find((x: any) => x.tipo === 'libre')?.total || 0)
-    }
-    return myReports.value.filter(r => r.tipoReporte === 'Libre').length
-})
+const totalTicketsReportes = computed(() => myReports.value.filter(r => r.tipoReporte === 'Ticket').length)
+const totalServiciosReportes = computed(() => myReports.value.filter(r => r.tipoReporte === 'Servicio Programado').length)
+const totalLibresReportes = computed(() => myReports.value.filter(r => r.tipoReporte === 'Libre').length)
 
 // totalHoras: Sum diff between fechaHoraInicio and fechaHoraFin across 'Cerrado / Trabajo Finalizado' reports
 const totalHoras = computed(() => {
-    if (analyticsData.value?.horas_hombre?.horas) return parseFloat(analyticsData.value.horas_hombre.horas) || 0
     let hl = 0;
     myReports.value.forEach((report: Reporte) => {
         if (report.estatusReporte === 'Cerrado / Trabajo Finalizado' && report.fechaHoraInicio && report.fechaHoraFin) {
             const start = new Date(report.fechaHoraInicio).getTime()
             const end = new Date(report.fechaHoraFin).getTime()
             if (!isNaN(start) && !isNaN(end) && end > start) {
-                const duration = (end - start) / (1000 * 60 * 60)
+                const duration = (end - start) / (1000 * 60 * 60) // diff in hours
+                // Multiply by number of executors to get true man-hours
                 hl += duration * (report.ejecutoresIds?.length || 1)
             }
         }
@@ -460,7 +447,6 @@ const totalHoras = computed(() => {
 
 // Times
 const mttrAvg = computed(() => {
-    if (analyticsData.value?.mttr?.mttr_horas) return parseFloat(analyticsData.value.mttr.mttr_horas) || 0
     let totalHrs = 0;
     let count = 0;
     myReports.value.forEach(r => {
@@ -493,41 +479,11 @@ const attentionTimeAvg = computed(() => {
 })
 
 // Distribution Counts
-const countPreventive = computed(() => {
-    if (analyticsData.value?.categoria) {
-        const c = analyticsData.value.categoria.find((x:any)=> x.categoria==='preventivo')
-        return c ? parseInt(c.total) : 0
-    }
-    return myReports.value.filter(r => r.categoria === 'Mantenimiento Preventivo').length
-});
-const countCorrective = computed(() => {
-    if (analyticsData.value?.categoria) {
-        const c = analyticsData.value.categoria.find((x:any)=> x.categoria==='correctivo')
-        return c ? parseInt(c.total) : 0
-    }
-    return myReports.value.filter(r => r.categoria === 'Mantenimiento Correctivo').length
-});
-const countDiagnostico = computed(() => {
-    if (analyticsData.value?.categoria) {
-        const c = analyticsData.value.categoria.find((x:any)=> x.categoria==='diagnostico')
-        return c ? parseInt(c.total) : 0
-    }
-    return myReports.value.filter(r => r.categoria === 'Diagnóstico').length
-});
-const countInstalacion = computed(() => {
-    if (analyticsData.value?.categoria) {
-        const c = analyticsData.value.categoria.find((x:any)=> x.categoria==='instalacion')
-        return c ? parseInt(c.total) : 0
-    }
-    return myReports.value.filter(r => r.categoria === 'Instalación').length
-});
-const countMejora = computed(() => {
-    if (analyticsData.value?.categoria) {
-        const c = analyticsData.value.categoria.find((x:any)=> x.categoria==='mejora')
-        return c ? parseInt(c.total) : 0
-    }
-    return myReports.value.filter(r => r.categoria === 'Mejora').length
-});
+const countPreventive = computed(() => myReports.value.filter(r => r.categoria === 'Mantenimiento Preventivo').length);
+const countCorrective = computed(() => myReports.value.filter(r => r.categoria === 'Mantenimiento Correctivo').length);
+const countDiagnostico = computed(() => myReports.value.filter(r => r.categoria === 'Diagnóstico').length);
+const countInstalacion = computed(() => myReports.value.filter(r => r.categoria === 'Instalación').length);
+const countMejora = computed(() => myReports.value.filter(r => r.categoria === 'Mejora').length);
 
 // Percentages
 const percentPreventive = computed(() => {
@@ -584,7 +540,7 @@ const slaComplianceData = computed(() => {
             
             if (resolutionTimestamp && requestTimestamp) {
                 const diffHours = (resolutionTimestamp - requestTimestamp) / (1000 * 60 * 60);
-                const maxWindow = SLA_WINDOWS[ticket.prioridad] || 48;
+                const maxWindow = (SLA_WINDOWS as Record<string, number>)[ticket.prioridad] || 48;
                 
                 if (diffHours <= maxWindow) {
                     insideSLA++;
@@ -600,13 +556,7 @@ const slaComplianceData = computed(() => {
     };
 });
 
-const slaPercentage = computed(() => {
-    if (analyticsData.value?.sla && Array.isArray(analyticsData.value.sla) && analyticsData.value.sla.length) {
-        const avg = analyticsData.value.sla.reduce((acc:any, cur:any)=> acc + parseFloat(cur.cumplimiento||0), 0) / analyticsData.value.sla.length
-        return Math.round(avg * 100)
-    }
-    return slaComplianceData.value.percentage
-});
+const slaPercentage = computed(() => slaComplianceData.value.percentage);
 
 const ftfrPercentage = computed(() => {
     let firstTimeFixes = 0;
@@ -627,14 +577,30 @@ const ftfrPercentage = computed(() => {
 
 // Phase 7 KPI Calculations
 
+// Helper para parsear tanto fecha-hora como horas simples (ej. "08:30:00" de MySQL)
+const parseTimeToMs = (timeStr?: string, baseDateStr?: string) => {
+    if (!timeStr) return NaN
+    const trimmed = String(timeStr).trim()
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+        const base = baseDateStr ? baseDateStr.slice(0, 10) : '2026-01-01'
+        const parts = trimmed.split(':')
+        const hh = parts[0].padStart(2, '0')
+        const mm = parts[1].padStart(2, '0')
+        const ss = parts[2] ? parts[2].padStart(2, '0') : '00'
+        return new Date(`${base}T${hh}:${mm}:${ss}`).getTime()
+    }
+    return new Date(trimmed.replace(' ', 'T')).getTime()
+}
+
 // 1. Tiempo Promedio de Utilización de Técnico (horaSalidaBase until horaRegresoABase)
 const techUtilizationAvg = computed(() => {
     let totalHrs = 0;
     let count = 0;
     myReports.value.forEach(r => {
         if (r.horaSalidaBase && r.horaRegresoABase) {
-            const start = new Date(r.horaSalidaBase).getTime();
-            const end = new Date(r.horaRegresoABase).getTime();
+            const baseDate = r.fechaHoraInicio || r.fechaElaboracion
+            const start = parseTimeToMs(r.horaSalidaBase, baseDate);
+            const end = parseTimeToMs(r.horaRegresoABase, baseDate);
             if (!isNaN(start) && !isNaN(end) && end > start) {
                 totalHrs += (end - start) / (1000 * 60 * 60);
                 count++;
@@ -671,20 +637,21 @@ const percentDiagnosisFallas = computed(() => {
 
 // 4. % de Retrabajos (Only on Tickets / Servicios Programados)
 const percentRework = computed(() => {
-    if (analyticsData.value?.retrabajos?.pct_retrabajo !== null && analyticsData.value?.retrabajos?.pct_retrabajo !== undefined) {
-        return Math.round(parseFloat(analyticsData.value.retrabajos.pct_retrabajo) || 0)
-    }
     const requestedWork = myReports.value.filter(r => r.tipoReporte === 'Ticket' || r.tipoReporte === 'Servicio Programado');
     if (requestedWork.length === 0) return null;
+    
+    // Group identical specific occurrences
     const originCounts = new Map<string, number>();
     requestedWork.forEach(r => {
         const key = `${r.tipoReporte}-${r.origenDatosId}`;
         originCounts.set(key, (originCounts.get(key) || 0) + 1);
     });
+
     const reworkCount = requestedWork.filter(r => {
         const key = `${r.tipoReporte}-${r.origenDatosId}`;
         return (originCounts.get(key) || 0) >= 2;
     }).length;
+
     return Math.round((reworkCount / requestedWork.length) * 100);
 });
 
@@ -697,32 +664,19 @@ const percentDiscarded = computed(() => {
 
 // 6. % de OT Cerradas de Conformidad (encuesta calificacion >= 8 / closed reports WITH survey)
 const percentConformity = computed(() => {
-    const closedReportsWithSurvey = mockEncuestas.filter(e => 
-        myReports.value.some(r => r.idReporte === e.idReporte && r.estatusReporte === 'Cerrado / Trabajo Finalizado')
+    const closedReportsWithSurvey = myReports.value.filter(r => 
+        r.estatusReporte === 'Cerrado / Trabajo Finalizado' && r.encuesta && r.encuesta.calificacion
     );
     if (closedReportsWithSurvey.length === 0) return null;
     
-    const satisfied = closedReportsWithSurvey.filter(e => e.calificacion >= 8).length;
+    const satisfied = closedReportsWithSurvey.filter(r => r.encuesta.calificacion >= 8).length;
     return Math.round((satisfied / closedReportsWithSurvey.length) * 100);
 });
 
 // Technician Hours Map
 const technicianHoursMap = computed(() => {
     const map = new Map<number, number>()
-
-    // Datos reales de la API (vista vw_horas_por_tecnico)
-    const apiHoras = analyticsData.value?.horas_por_tecnico
-    if (Array.isArray(apiHoras) && apiHoras.length) {
-        apiHoras.forEach((r: any) => {
-            const id = Number(r.usuario_id)
-            const horas = parseFloat(r.horas || 0)
-            if (selectedTechnician.value === null || id === selectedTechnician.value) {
-                map.set(id, (map.get(id) || 0) + horas)
-            }
-        })
-        return map
-    }
-
+    
     myReports.value.forEach((report: Reporte) => {
         if (report.estatusReporte === 'Cerrado / Trabajo Finalizado' && report.fechaHoraInicio && report.fechaHoraFin) {
             const start = new Date(report.fechaHoraInicio).getTime()
@@ -746,10 +700,8 @@ const technicianHoursMap = computed(() => {
 const sortedTechnicianData = computed(() => {
     const data: { name: string, hours: number }[] = []
     technicianHoursMap.value.forEach((val: number, id: number) => {
-        // Preferir nombres reales de la API (usuarios), fallback a mockUsers
-        const real = realTechs.value.find((u: any) => u.id === id)
-        const user = mockUsers.find((u: Usuario) => u.idUsuario === id)
-        const name = real ? real.nombre : (user ? `${user.nombre} ${user.apellidos}` : `Usuario ${id}`)
+        const user = realUsers.value.find((u: any) => (u.idUsuario || u.id) === id)
+        const name = user ? `${user.nombre} ${user.apellidos}` : `Usuario ${id}`
         data.push({ name, hours: Number(val.toFixed(1)) })
     })
     return data.sort((a, b) => b.hours - a.hours) // Sort descending
@@ -764,16 +716,6 @@ const chart1TimelineData = computed(() => {
     const proactiveData: number[] = []
     const reactiveData: number[] = []
     const now = new Date()
-
-    // Datos reales de la API (vista vw_proactivo_reactivo)
-    const pr = analyticsData.value?.proactivo_reactivo
-    if (pr !== null && pr !== undefined && (pr.proactivo !== undefined || pr.reactivo !== undefined)) {
-        const label = timeFilter.value === 'Histórico' ? 'Todo' : timeFilter.value
-        labels.push(label)
-        proactiveData.push(parseInt(pr.proactivo || 0, 10))
-        reactiveData.push(parseInt(pr.reactivo || 0, 10))
-        return { labels, proactiveData, reactiveData }
-    }
 
     switch (timeFilter.value) {
         case 'Hoy': {

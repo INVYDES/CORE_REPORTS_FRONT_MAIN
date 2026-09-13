@@ -17,24 +17,24 @@ const usersPerDep = {
 
 let newReports = [];
 let newEncuestas = [];
-let nextReportId = 50; 
-let nextEncuestaId = 2; 
+let nextReportId = 50;
+let nextEncuestaId = 2;
 let nextFolioNum = 50;
 
 for (let i = 0; i < 40; i++) {
     const dep = deps[Math.floor(Math.random() * deps.length)];
     const creators = usersPerDep[dep];
-    const creator = creators[0]; 
-    const executor = creators[Math.floor(Math.random() * (creators.length - 1)) + 1]; 
-    
+    const creator = creators[0];
+    const executor = creators[Math.floor(Math.random() * (creators.length - 1)) + 1];
+
     const cat = cats[Math.floor(Math.random() * cats.length)];
     const start = new Date(2026, 0, 1);
     const end = new Date(2026, 2, 10);
     const d1 = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
-    const d2 = new Date(d1.getTime() + (Math.random() * 4 + 1) * 60 * 60 * 1000); 
-    const d3 = new Date(d2.getTime() + (Math.random() * 2 + 1) * 60 * 60 * 1000); 
-    
-    const isFinished = Math.random() > 0.2; 
+    const d2 = new Date(d1.getTime() + (Math.random() * 4 + 1) * 60 * 60 * 1000);
+    const d3 = new Date(d2.getTime() + (Math.random() * 2 + 1) * 60 * 60 * 1000);
+
+    const isFinished = Math.random() > 0.2;
     const reportType = Math.random() > 0.5 ? 'Libre' : 'Ticket';
     const originId = reportType === 'Libre' ? null : Math.floor(Math.random() * 15) + 1;
 
@@ -65,7 +65,7 @@ for (let i = 0; i < 40; i++) {
         newEncuestas.push({
             idEncuesta: nextEncuestaId++,
             idReporte: rep.idReporte,
-            calificacion: Math.floor(Math.random() * 5) + 6, 
+            calificacion: Math.floor(Math.random() * 5) + 6,
             comentarios: "Buen servicio, generado automáticamente.",
             nombreFirma: "Firma Automatizada",
             fecha: new Date(d3.getTime() + 1000 * 60 * 60).toISOString().slice(0, 16)

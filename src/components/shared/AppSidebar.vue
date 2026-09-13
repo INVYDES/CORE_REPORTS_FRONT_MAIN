@@ -17,39 +17,35 @@
         FilePlus2,
         CalendarDays
     } from 'lucide-vue-next'
-
+    
+    // Store initialization
     const authStore = useAuthStore()
     const { currentUser } = storeToRefs(authStore)
+
     const router = useRouter()
+    const route = useRoute()
+
+    const handleLogout = async () => {
+        await authStore.logout()
+        router.push({ name: 'login' })
+    }
 
     const buildTime = __BUILD_TIME__
 
-    const rolLabels: Record<number, string> = {
-        0: 'Cliente',
-        1: 'Admin Técnico',
-        2: 'Admin Comercial',
-        3: 'Técnico'
-    }
-    const rolClassMap: Record<number, string> = {
-        0: 'role-cliente',
-        1: 'role-admin-tec',
-        2: 'role-admin-com',
-        3: 'role-tecnico'
-    }
-    const roleLabel = computed(() => rolLabels[currentUser.value?.rol ?? -1] || 'Sin rol')
-    const roleClass = computed(() => rolClassMap[currentUser.value?.rol ?? -1] || '')
-
-    const route = useRoute()
     
+    // Props
     const props = defineProps<{
         isOpen: boolean
     }>()
     
-    const emit = defineEmits(['close', 'openReportModal', 'openTicketModal'])
+    // Emits
+    const emit = defineEmits(['close'])
     
+    // Menu Items
     const menuItems = computed(() => {
         const items = [
 
+            // General overview (For Everyone)
             {
                 label: 'Vista general',
                 path: 'dashboard',
@@ -57,32 +53,38 @@
                 roles: [1, 2, 3] // Admin Tec, Admin Com, Tech
             },
 
+            // History (Calendar) view
             {
                 label: 'Historial',
                 path: 'history',
                 icon: CalendarDays,
-                roles: [1, 3] // Solo Tech Admin y Tech
+                roles: [1, 2, 3]
             },
 
+            // ------------------------- REPORTES ---------------------------------
+            // Reports
             {
                 label: 'Reportes',
-                path: 'reports', // We will update this when you split the views!
+                path: 'reports',
                 icon: FileText,
-                roles: [1, 3] 
+                roles: [1, 2, 3] 
             },
+            // New Report
             {
                 label: 'Nuevo Reporte',
-                path: 'reports-new', // We will update this when you split the views!
+                path: 'reports-new',
                 icon: FilePlus2,
-                roles: [1, 3] 
+                roles: [1, 2, 3] 
             },
 
+            // ------------------------- TICKETS ---------------------------------
 
+            // Tickets
             {
                 label: 'Tickets',
                 path: 'tickets',
                 icon: Ticket,
-                roles: [1, 3]
+                roles: [1, 2, 3]
             },
             
             {
@@ -93,50 +95,51 @@
                 target: '_blank'
             },
 
+            // ------------------ SERVICIOS PROGRAMADOS -----------------------
+            // Scheduled (Servicios Programados)
             {
                 label: 'Servicios Programados',
                 path: 'schedule-list',
                 icon: CalendarClock,
-                roles: [1, 3]
+                roles: [1, 2, 3]
             },
 
+            // Scheduling
             {
                 label: 'Programar Nuevo Servicio',
                 path: 'schedule-manager',
                 icon: CalendarPlus,
-                roles: [1] 
+                roles: [1, 2] 
             },
 
 
+            // ----------------------- MÉTRICAS Y PERFIL DE LA EMPRESA -----------------------------
+            // Analysis
             {
                 label: 'Análisis',
                 path: 'analysis',
                 icon: BarChart3,
                 roles: [1, 2] // Both Admins
             },
+            // Subareas Management
             {
                 label: 'Gestión de Subdependencias/Áreas',
                 path: 'subareas-manager',
                 icon: Network,
                 roles: [1, 2] // Both Admins
             },
+            // Profile
             {
-                label: 'Mi Perfil',
+                label: 'Perfil de Empresa',
                 path: 'company-profile',
                 icon: Building2,
-                roles: [2] // Commercial Admin
+                roles: [1, 2] // Admins
             },
         ]
         
-        if (!currentUser.value) return []
-        return items.filter(item => item.roles.includes(currentUser.value!.rol))
+        // 3. Filter using the numeric role from our active session
+        return items.filter(item => currentUser.value && item.roles.includes(currentUser.value.rol))
     })
-
-    const handleLogout = async () => {
-        await authStore.logout()
-        emit('close')
-        router.push({ name: 'login' })
-    }
 </script>
 
 <!------------------------------------------------------------------------------------------------------------------>
@@ -152,47 +155,31 @@
 
         <nav class = "sidebar-nav">
 
-            <template v-for="item in menuItems" :key="item.path">
-                <button v-if="item.path === 'reports-new'" class="nav-item" @click="emit('openReportModal'); emit('close')">
-                    <component :is="item.icon" :size="20" />
-                    <span>{{ item.label }}</span>
-                </button>
-                <button v-else-if="item.path === 'create-ticket'" class="nav-item" @click="emit('openTicketModal'); emit('close')">
-                    <component :is="item.icon" :size="20" />
-                    <span>{{ item.label }}</span>
-                </button>
-                <router-link v-else
-                    :to = "{ name: item.path }"
-                    :target="item.target"
-                    class = "nav-item"
-                    :class = "{ 'active' : route.name === item.path }"
-                >
-                    <component 
-                        :is = "item.icon"
-                        :size = "20"
-                    />
-                    <span>{{ item.label }}</span>            
-                </router-link>
-            </template>
+            <!--Router links-->
+            <router-link
+                v-for="item in menuItems"
+                :key= "item.path"
+                :to = "{ name: item.path }"
+                :target="item.target"
+                class = "nav-item"
+                :class = "{ 'active' : route.name === item.path }"
+            >
+                <!-- Item icons-->
+                <component 
+                    :is = "item.icon"
+                    :size = "20"
+                />
+                <span>{{ item.label }}</span>            
+            </router-link>
         </nav>
 
         <!-- Sidebar Footer-->
         <div class = "sidebar-footer">
 
-            <!-- Rol actual (reemplaza Cambiar Usuario) -->
-            <div class="role-container">
-                <div class="role-header">
-                    <span class="role-badge" :class="roleClass">{{ roleLabel }}</span>
-                </div>
-                <div class="user-info" v-if="currentUser">
-                    <div class="user-name">{{ currentUser.nombre }} {{ currentUser.apellidos }}</div>
-                    <div class="user-email">{{ currentUser.email }}</div>
-                </div>
-            </div>
 
-            <button class = "logout-btn" @click="handleLogout">
+            <button @click="handleLogout" class = "logout-btn">
                 <LogOut :size = "18" />
-                <span>Cerrar sesión</span>
+                <span>Sign Out</span>
             </button>
             <div class="build-time">
                 Built: {{ buildTime }}
@@ -281,14 +268,6 @@
       border-left: 3px solid $primary-blue;
     }
   }
-  button.nav-item {
-    background: transparent;
-    border: none;
-    width: 100%;
-    text-align: left;
-    cursor: pointer;
-    font-family: inherit;
-  }
     }
 
     .sidebar-footer {
@@ -324,42 +303,6 @@
         font-family: monospace;
     }
 
-    .role-container {
-        margin-bottom: 1rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 8px;
-        padding: 0.75rem;
-    }
-
-    .role-header {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .role-badge {
-        font-size: 0.7rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.1);
-        &.role-cliente { background: rgba(148,163,184,0.15); color: #e2e8f0; }
-        &.role-admin-tec { background: rgba(59,130,246,0.15); color: #93c5fd; border-color: rgba(59,130,246,0.3); }
-        &.role-admin-com { background: rgba(16,185,129,0.15); color: #6ee7b7; border-color: rgba(16,185,129,0.3); }
-        &.role-tecnico { background: rgba(245,158,11,0.15); color: #fcd34d; border-color: rgba(245,158,11,0.3); }
-    }
-
-    .user-info {
-        text-align: center;
-        .user-name { font-size: 0.85rem; font-weight: 600; color: white; }
-        .user-email { font-size: 0.7rem; color: rgba($text-color, 0.6); word-break: break-all; }
-    }
 }
 
 </style>

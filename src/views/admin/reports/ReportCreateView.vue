@@ -1,34 +1,36 @@
 <script setup lang="ts">
-// @ts-nocheck
+    // Importing necessary functions
     import { reactive, computed, ref, onMounted } from 'vue';
-    import { useRouter } from 'vue-router'
-    const router = useRouter()
-
+    import { useRouter, useRoute } from 'vue-router';
     import { useAuthStore } from '../../../stores/authStore';
     import { storeToRefs } from 'pinia';
+    import { getDependenciaName } from '../../../data/mockDependencias';
+    import type { ReporteMaterial, EvidenciaFotografica } from '../../../data/mockReportes';
+    import { apiFetch } from '../../../api/apiClient';
+    import { Camera, ArrowLeft } from 'lucide-vue-next';
 
+    const router = useRouter();
+    const route = useRoute();
     const authStore = useAuthStore();
     const { currentUser } = storeToRefs(authStore);
 
-    if (!currentUser.value || (currentUser.value?.rol !== 1 && currentUser.value?.rol !== 3)) {
-        router.push({ name: 'dashboard' })
+    const fileInputRef = ref<HTMLInputElement | null>(null);
+    const triggerFileInput = () => {
+        fileInputRef.value?.click();
+    };
+
+    // Role-based access: tech roles (1: Admin Técnico, 3: Técnico) and commercial admin (2) can create/edit reports
+    if (!currentUser.value || (currentUser.value.rol !== 1 && currentUser.value.rol !== 2 && currentUser.value.rol !== 3)) {
+        router.push({ name: 'dashboard' });
     }
 
-    import { getDependenciaName } from '../../../data/mockDependencias';
-    import type { ReporteMaterial, EvidenciaFotografica } from '../../../data/mockReportes';
-        import { ticketsApi } from '../../../api/tickets';
-    import { serviciosApi } from '../../../api/servicios';
-    import { areasApi } from '../../../api/areas';
-    import client from '../../../api/client';
-    import { useToast } from 'vue-toastification';
-    import { Image as ImageIcon, Upload, X as XIcon, Camera } from 'lucide-vue-next'
-    const toast = useToast();
-
-    const props = defineProps<{ isModal?: boolean }>()
-    const emit = defineEmits<{ (e: 'close'): void; (e: 'created'): void }>()
-    import { mockSubdependencias as fallbackAreas } from '../../../data/mockDependencias';
-    import { mockUsers as fallbackUsers } from '../../../data/mockUsers';
+    const editReportId = computed(() => {
+        return route.params.id ? Number(route.params.id) : null
+    })
+    const isEditMode = computed(() => !!editReportId.value)
+    const existingFolio = ref('')
     
+    // Reactive form data for creating a new report
     const formData = reactive(
         {
         tipoReporte: 'Ticket',
@@ -36,7 +38,7 @@
         categoria: 'Mantenimiento Correctivo' as 'Mantenimiento Preventivo' | 'Mantenimiento Correctivo' | 'Instalación' | 'Mejora' | 'Diagnóstico',
         fallaReportada: '',
         conclusionTrabajo: '',
-        fechaElaboracion: new Date().toISOString().slice(0, 16),
+        fechaElaboracion: new Date().toISOString().slice(0, 10),
         idSubdependencia: null as number | null,
         responsableTexto: '',
         cargoTexto: '',
@@ -54,75 +56,259 @@
         }
     )
 
-    const dependencyName = computed(() =>
-        (currentUser.value as any)?.dependencia?.nombre || getDependenciaName((currentUser.value as any).idDependencia ?? (currentUser.value as any).dependencia_id)
-    )
+    const isSubmitting = ref(false)
+    const tickets = ref<any[]>([])
+    const services = ref<any[]>([])
+    const technicians = ref<any[]>([])
+    const subareas = ref<any[]>([])
 
-    const realAreas = ref<any[]>([])
-    const availableSubareas = computed(() => {
-        if (realAreas.value.length) return realAreas.value
-        return fallbackAreas.filter((s: any) => s.idDependencia === ((currentUser.value as any).idDependencia ?? (currentUser.value as any).dependencia_id) && s.activo)
-    })
-    onMounted(async ()=>{
-        try {
-            const res = await areasApi.list()
-            const list = res.data || res
-            realAreas.value = (Array.isArray(list) ? list : []).map((a:any)=> ({ idSubdependencia: a.id, idDependencia: a.dependencia_id, nombre: a.nombre, activo: a.activa }))
-        } catch {}
-        try {
-            const t = await ticketsApi.list({ per_page: 100 })
-            const list = t.data || t
-            availableTicketsReal.value = Array.isArray(list) ? list : []
-        } catch {}
-        try {
-            const s = await serviciosApi.list({ per_page: 100 })
-            const list = s.data || s
-            availableServicesReal.value = Array.isArray(list) ? list : []
-        } catch {}
-        try {
-            const u = await client.get('/usuarios', { params:{ per_page:100 } }).then(r=>r.data)
-            const list = u.data || u
-            availableTechniciansReal.value = Array.isArray(list) ? list.filter((x:any)=> [1,3].includes(x.rol)) : []
-        } catch {}
-    })
+    // Auto-llenar campos a partir del origen seleccionado (Ticket o Servicio)
+    const handleOriginChange = (newId: number | null, overwrite = false) => {
+        if (!newId) return
 
-    const availableTicketsReal = ref<any[]>([])
-    const availableServicesReal = ref<any[]>([])
-    const availableTechniciansReal = ref<any[]>([])
+        if (formData.tipoReporte === 'Ticket') {
+            const ticket = tickets.value.find(t => t.id === newId)
+            if (ticket) {
+                if (overwrite || !formData.fallaReportada.trim()) {
+                    formData.fallaReportada = ticket.asunto ? (ticket.asunto + (ticket.descripcion ? ` - ${ticket.descripcion}` : '')) : ''
+                }
+                if (ticket.solicitante && (overwrite || !formData.responsableTexto.trim())) {
+                    formData.responsableTexto = ticket.solicitante
+                }
+                if (ticket.cargo && (overwrite || !formData.cargoTexto.trim())) {
+                    formData.cargoTexto = ticket.cargo
+                }
+                if (ticket.idSubdependencia) {
+                    formData.idSubdependencia = ticket.idSubdependencia
+                }
+                const techId = ticket.idTecnicoAtendio || ticket.id_tecnico_atendio
+                if (techId && !formData.ejecutoresIds.includes(techId)) {
+                    if (formData.ejecutoresIds.length < 4) {
+                        formData.ejecutoresIds.push(techId)
+                    }
+                }
+            }
+        } else if (formData.tipoReporte === 'Servicio Programado') {
+            const servicio = services.value.find(s => s.id === newId)
+            if (servicio) {
+                if (overwrite || !formData.fallaReportada.trim()) {
+                    formData.fallaReportada = servicio.asunto ? (servicio.asunto + (servicio.descripcion ? ` - ${servicio.descripcion}` : '')) : ''
+                }
+                if (servicio.solicitante && (overwrite || !formData.responsableTexto.trim())) {
+                    formData.responsableTexto = servicio.solicitante
+                }
+                if (servicio.cargo && (overwrite || !formData.cargoTexto.trim())) {
+                    formData.cargoTexto = servicio.cargo
+                }
+                if (servicio.idSubdependencia) {
+                    formData.idSubdependencia = servicio.idSubdependencia
+                }
+                const techId = servicio.idTecnicoAsignado
+                if (techId && !formData.ejecutoresIds.includes(techId)) {
+                    if (formData.ejecutoresIds.length < 4) {
+                        formData.ejecutoresIds.push(techId)
+                    }
+                }
+            }
+        }
 
-    const getAsuntoFallback = (tipo:string, id:number) => {
-        if (tipo==='Ticket') {
-            const r = availableTicketsReal.value.find((t:any)=> t.id===id)
-            return r ? r.asunto : 'Ticket no encontrado'
-        } else {
-            const r = availableServicesReal.value.find((s:any)=> s.id===id)
-            return r ? r.asunto : 'Servicio no encontrado'
+        // Si el usuario logueado es técnico y no está en la cuadrilla, agregarlo automáticamente
+        if (currentUser.value?.idUsuario && !formData.ejecutoresIds.includes(currentUser.value.idUsuario)) {
+            if (formData.ejecutoresIds.length < 4) {
+                formData.ejecutoresIds.push(currentUser.value.idUsuario)
+            }
         }
     }
 
-    const asuntoOrigen = computed(() => {
-        if(!formData.origenDatosId) return 'Seleccione un origen de datos...'
-        return getAsuntoFallback(formData.tipoReporte, formData.origenDatosId)
+    // Formateador robusto para inputs de tipo "datetime-local" (YYYY-MM-DDTHH:mm)
+    const formatForDatetimeInput = (val: string | null | undefined, fallbackDate?: string): string => {
+        if (!val) return ''
+        const trimmed = String(val).trim()
+        if (!trimmed) return ''
+
+        const dateBase = (fallbackDate ? fallbackDate.slice(0, 10) : '') || new Date().toISOString().slice(0, 10)
+
+        // Caso 1: Viene solo hora (ej. "08:30:00", "08:30", "8:30")
+        if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+            const parts = trimmed.split(':')
+            const hh = parts[0].padStart(2, '0')
+            const mm = parts[1].padStart(2, '0')
+            return `${dateBase}T${hh}:${mm}`
+        }
+
+        // Caso 2: Viene con fecha y hora (ej. "2026-09-09 08:30:00" o "2026-09-09T08:30:00")
+        if (trimmed.includes('T') || (trimmed.includes(' ') && trimmed.includes('-'))) {
+            const normalized = trimmed.replace(' ', 'T')
+            if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(normalized)) {
+                return normalized.slice(0, 16)
+            }
+        }
+
+        // Caso 3: Viene solo la fecha (ej. "2026-09-09")
+        if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+            return `${trimmed}T08:00`
+        }
+
+        // Caso 4: Intento genérico con Date
+        const d = new Date(trimmed)
+        if (!isNaN(d.getTime())) {
+            const year = d.getFullYear()
+            const month = String(d.getMonth() + 1).padStart(2, '0')
+            const day = String(d.getDate()).padStart(2, '0')
+            const hours = String(d.getHours()).padStart(2, '0')
+            const minutes = String(d.getMinutes()).padStart(2, '0')
+            return `${year}-${month}-${day}T${hours}:${minutes}`
+        }
+
+        return ''
+    }
+
+    const loadFormData = async () => {
+        try {
+            const [tRes, sRes, techRes, subRes] = await Promise.all([
+                apiFetch('/tickets').catch(() => ({ data: [] })),
+                apiFetch('/servicios').catch(() => ({ data: [] })),
+                apiFetch('/tecnicos').catch(() => ({ data: [] })),
+                apiFetch('/subdependencias').catch(() => ({ data: [] }))
+            ])
+
+            if (tRes.data) tickets.value = tRes.data
+            if (sRes.data) services.value = sRes.data
+            if (techRes.data) technicians.value = techRes.data
+            if (subRes.data) subareas.value = subRes.data
+
+            if (editReportId.value) {
+                try {
+                    const repRes = await apiFetch(`/reportes/${editReportId.value}`)
+                    if (repRes.data) {
+                        const rep = repRes.data
+                        existingFolio.value = rep.folio || ''
+                        formData.tipoReporte = rep.tipoReporte || rep.tipo_reporte || 'Libre'
+                        formData.origenDatosId = rep.origenDatosId || rep.origen_datos_id || null
+                        formData.categoria = rep.categoria || 'Mantenimiento Correctivo'
+                        
+                        const baseDate = (rep.fechaHoraInicio ? rep.fechaHoraInicio.slice(0, 10) : '')
+                            || (rep.fecha_hora_inicio ? rep.fecha_hora_inicio.slice(0, 10) : '')
+                            || (rep.fechaElaboracion ? rep.fechaElaboracion.slice(0, 10) : '')
+                            || (rep.fecha_elaboracion ? rep.fecha_elaboracion.slice(0, 10) : '')
+                            || new Date().toISOString().slice(0, 10)
+
+                        formData.fechaElaboracion = (rep.fechaElaboracion ? rep.fechaElaboracion.slice(0, 10) : '')
+                            || (rep.fecha_elaboracion ? rep.fecha_elaboracion.slice(0, 10) : '')
+                            || new Date().toISOString().slice(0, 10)
+                        formData.idSubdependencia = rep.idSubdependencia || rep.id_subdependencia || null
+                        formData.responsableTexto = rep.responsableTexto || rep.responsable_texto || ''
+                        formData.cargoTexto = rep.cargoTexto || rep.cargo_texto || ''
+                        
+                        const eIds = (rep.ejecutoresIds && rep.ejecutoresIds.length)
+                            ? rep.ejecutoresIds
+                            : (rep.ejecutores ? rep.ejecutores.map((e: any) => e.idUsuario || e.id_usuario) : [])
+                        formData.ejecutoresIds = eIds
+
+                        formData.horaSalidaBase = formatForDatetimeInput(rep.horaSalidaBase || rep.hora_salida_base, baseDate)
+                        formData.horaLlegadaSitio = formatForDatetimeInput(rep.horaLlegadaSitio || rep.hora_llegada_sitio, baseDate)
+                        formData.fechaHoraInicio = formatForDatetimeInput(rep.fechaHoraInicio || rep.fecha_hora_inicio, baseDate)
+                        formData.fechaHoraFin = formatForDatetimeInput(rep.fechaHoraFin || rep.fecha_hora_fin, baseDate)
+                        formData.horaRegresoABase = formatForDatetimeInput(rep.horaRegresoABase || rep.hora_regreso_a_base, baseDate)
+                        
+                        const act = rep.desarrolloActividades || ''
+                        const conclusionSplit = act.split("\n\nConclusión:\n")
+                        if (conclusionSplit.length > 1) {
+                            formData.desarrolloActividades = conclusionSplit[0]
+                            formData.conclusionTrabajo = conclusionSplit.slice(1).join("\n\nConclusión:\n")
+                        } else {
+                            formData.desarrolloActividades = act
+                            formData.conclusionTrabajo = rep.conclusionTrabajo || ''
+                        }
+
+                        formData.fallaReportada = rep.fallaReportada || ''
+                        formData.esRetrabajo = !!rep.esRetrabajo
+                        formData.estatusReporte = rep.estatusReporte || 'Abierto / Trabajo Parcial'
+
+                        formData.materiales = (rep.materiales || []).map((m: any) => ({
+                            idItem: m.idItem || m.id_item || Date.now() + Math.random(),
+                            material: m.material || '',
+                            cantidad: Number(m.cantidad) || 1,
+                            unidad: m.unidad || 'Pieza'
+                        }))
+
+                        formData.evidenciaFotografica = (rep.evidenciaFotografica || []).map((e: any) => ({
+                            url: e.url || '',
+                            comentario: e.comentario || ''
+                        }))
+                    }
+                } catch (err) {
+                    console.error('Error al cargar reporte para editar:', err)
+                    alert('No se pudo cargar el reporte para editar.')
+                    router.push({ name: 'reports' })
+                }
+            } else {
+                // Detectar si fue redireccionado con parámetros de URL (Punto 4)
+                const queryTipo = route.query.tipo as string
+                const queryId = route.query.id ? Number(route.query.id) : null
+
+                if (queryTipo && (queryTipo === 'Ticket' || queryTipo === 'Servicio Programado' || queryTipo === 'Libre')) {
+                    formData.tipoReporte = queryTipo as any
+                }
+
+                if (queryId) {
+                    formData.origenDatosId = queryId
+                    handleOriginChange(queryId, true)
+                } else if (currentUser.value?.idUsuario && formData.ejecutoresIds.length === 0) {
+                    formData.ejecutoresIds.push(currentUser.value.idUsuario)
+                }
+            }
+        } catch (error) {
+            console.error('Error al cargar datos auxiliares para el reporte:', error)
+        }
+    }
+
+    onMounted(() => {
+        loadFormData()
     })
 
-    const ROLE_TO_CARGO: Record<number, string> ={
+    // Check for the enterprise name
+    const dependencyName = computed(() =>
+        currentUser.value?.empresa?.nombre || getDependenciaName(currentUser.value?.idDependencia || 1)
+    )
+
+    const availableSubareas = computed(() => {
+        return subareas.value.filter((s: any) => s.activo)
+    })
+
+    // Get "asunto" from the selected ticket/service "auto-complete"
+    const asuntoOrigen = computed(() => {
+        if(!formData.origenDatosId) return 'Seleccione un origen de datos...'
+        
+        if(formData.tipoReporte === 'Ticket') {
+            const ticket = tickets.value.find(t => t.id === formData.origenDatosId)
+            return ticket ? ticket.asunto : 'Ticket no encontrado'
+        } else if (formData.tipoReporte === 'Servicio Programado'){
+            const servicio = services.value.find(s => s.id === formData.origenDatosId)
+            return servicio ? servicio.asunto : 'Servicio no encontrado'
+        }
+        return 'Reporte Libre'
+    })
+
+    // Dictionary to translate DB roles into presentation titles
+    const ROLE_TO_CARGO: Record<number, string> = {
         0: 'Default',
         1: 'Admin. de Técnicos',
         2: 'Administrador Comercial',
         3: 'Técnico'
     }
 
+    // Filter technicians / "Ejecutores"
     const availableTechnicians = computed(() => {
-        if (availableTechniciansReal.value.length) return availableTechniciansReal.value.map((u:any)=> ({ ...u, idUsuario: u.id, idDependencia: u.dependencia_id, nombre: u.nombre, apellidos: u.apellidos, rol: u.rol, numeroEmpleado: u.numero_empleado }))
-        return fallbackUsers.filter((u: any) => u.idDependencia === ((currentUser.value as any).idDependencia ?? (currentUser.value as any).dependencia_id) && (u.rol === 3 || u.rol === 1))
+        return technicians.value
     })
 
-    const getEjecutorData = (id:number) => {
-        const real = availableTechnicians.value.find((u: any) => (u.idUsuario||u.id) === id)
-        if (real) return real
-        return fallbackUsers.find((u: any) => u.idUsuario === id)
+    // Full data of executors
+    const getEjecutorData = (id: number) => {
+        return technicians.value.find((u: any) => u.idUsuario === id || u.id === id)
     }
 
+    // Automatic time calculator
     const totalHorasCalculadas = computed(() =>
     {
         if(!formData.fechaHoraInicio || !formData.fechaHoraFin) return '0.0 hrs'
@@ -131,28 +317,31 @@
         const end = new Date(formData.fechaHoraFin).getTime()
 
         const diffMs = end - start
-        if(diffMs < 0) return '0.0 hrs' // Prevent negative time
+        if(diffMs < 0) return '0.0 hrs'
 
         const hours = diffMs / (1000 * 60 * 60)
         return `${hours.toFixed(2)} hrs`
-    }
-    )
+    })
 
+    // Add a new empty slot for an executor (Max 4)
     const addEjecutor = () => {
         if (formData.ejecutoresIds.length < 4) {
             formData.ejecutoresIds.push(0)
         }
     }
 
+    // Remove an executor from the list
     const removeEjecutor = (index: number) => {
         formData.ejecutoresIds.splice(index, 1)
     }
 
+    // Helper to translate the rol to cargo for the UI row
     const getEjecutorCargo = (id: number) => {
-    const user = getEjecutorData(id)
-    return user ? (ROLE_TO_CARGO[user.rol] || 'Sin Cargo') : '...'
+        const user = getEjecutorData(id)
+        return user ? (ROLE_TO_CARGO[user.rol] || 'Técnico') : '...'
     }
 
+    // Add row for materials
     const addMaterialRow = () => {
         formData.materiales.push({
             idItem: formData.materiales.length + 1,
@@ -162,6 +351,7 @@
         })
     }
 
+    // Remove material row
     const removeMaterialRow = (index: number) => {
         formData.materiales.splice(index, 1)
         formData.materiales.forEach((m, i) => {
@@ -169,84 +359,149 @@
         })
     }
 
+    // Filtered available tickets (excluyendo tickets finalizados / resueltos / cerrados)
     const availableTickets = computed(() => {
-        if (availableTicketsReal.value.length) return availableTicketsReal.value.map((t:any)=> ({ id: t.id, folio: t.folio, asunto: t.asunto, idDependencia: t.dependencia_id }))
-        return []
-    })
-    const availableServices = computed(() => {
-        if (availableServicesReal.value.length) return availableServicesReal.value.map((s:any)=> ({ id: s.id, folio: s.folio, asunto: s.asunto, idDependencia: s.dependencia_id }))
-        return []
-    })
-
-    const isSaving = ref(false)
-    const pendingFiles = ref<File[]>([])
-
-    const saveReport = async () => {
-        if (isSaving.value) return
-        isSaving.value = true
-        try {
-            const { mapReporteForBackend, buildReporteFormData } = await import('../../../api/mapper')
-            const mapped = mapReporteForBackend(formData, pendingFiles.value)
-            if (!formData.responsableTexto.trim()) {
-                toast.error('Escribe un Responsable en la Sección 2')
-                isSaving.value = false
-                return
+        return tickets.value.filter(ticket => {
+            const isFinalized = ticket.estatus === 'Resuelto' || ticket.estatus === 'Cerrado' || ticket.estatus === 'Finalizado'
+            if (isFinalized && formData.origenDatosId !== ticket.id) {
+                return false
             }
-            const fd = await buildReporteFormData(mapped, client)
-            if (formData.conclusionTrabajo) fd.append('desarrollo', (formData.desarrolloActividades || '') + '\nConclusión: ' + formData.conclusionTrabajo)
-            const res = await client.post('/reportes', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-            toast.success(`¡Éxito! El reporte ${res.data.folio} ha sido guardado. El back ya sincronizó Ticket/Servicio automáticamente.`)
-            if (props.isModal) { emit('created'); emit('close') } else router.push({ name: 'dashboard' })
-        } catch (e:any) {
-            const msg = e?.message || e?.response?.data?.message || JSON.stringify(e?.response?.data?.errors) || 'Error al guardar reporte'
-            toast.error(msg)
-        } finally { isSaving.value = false }
+            return true
+        })
+    })
+
+    // Filtered available services (excluyendo servicios finalizados / realizados / cerrados)
+    const availableServices = computed(() => {
+        return services.value.filter(servicio => {
+            const isFinalized = servicio.estatus === 'Realizado' || servicio.estatus === 'Cerrado' || servicio.estatus === 'Finalizado'
+            if (isFinalized && formData.origenDatosId !== servicio.id) {
+                return false
+            }
+            return true
+        })
+    })
+
+    // Save Reports
+    const saveReport = async () => {
+        if (!formData.origenDatosId && formData.tipoReporte !== 'Libre') {
+            alert('Por favor selecciona un ID de origen de datos.')
+            return
+        }
+
+        if (!formData.responsableTexto.trim()) {
+            alert('Por favor escribe un Responsable en la Sección 2.')
+            return
+        }
+
+        if (!formData.fechaHoraInicio || !formData.fechaHoraFin) {
+            alert('Por favor especifica fecha y hora de inicio y fin.')
+            return
+        }
+
+        if (!formData.desarrolloActividades.trim()) {
+            alert('Por favor detalla el desarrollo de actividades.')
+            return
+        }
+
+        if (formData.estatusReporte === 'Cerrado / Trabajo Finalizado' && !formData.horaRegresoABase) {
+            alert('Por favor, indica la hora de regreso a base para poder cerrar el reporte.')
+            return
+        }
+
+        isSubmitting.value = true
+        try {
+            const payload = {
+                tipoReporte: formData.tipoReporte,
+                origenDatosId: formData.origenDatosId,
+                categoria: formData.categoria,
+                fechaElaboracion: formData.fechaElaboracion,
+                idSubdependencia: formData.idSubdependencia,
+                responsableTexto: formData.responsableTexto,
+                cargoTexto: formData.cargoTexto,
+                ejecutoresIds: formData.ejecutoresIds.filter(id => id > 0),
+                horaSalidaBase: formData.horaSalidaBase,
+                horaLlegadaSitio: formData.horaLlegadaSitio,
+                fechaHoraInicio: formData.fechaHoraInicio,
+                fechaHoraFin: formData.fechaHoraFin,
+                horaRegresoABase: formData.horaRegresoABase,
+                desarrolloActividades: formData.desarrolloActividades,
+                fallaReportada: formData.fallaReportada.trim() || asuntoOrigen.value,
+                conclusionTrabajo: formData.conclusionTrabajo,
+                materiales: formData.materiales,
+                evidenciaFotografica: formData.evidenciaFotografica,
+                esRetrabajo: formData.esRetrabajo,
+                estatusReporte: formData.estatusReporte
+            }
+
+            if (isEditMode.value && editReportId.value) {
+                const res = await apiFetch(`/reportes/${editReportId.value}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(payload)
+                })
+                const folio = res.data?.folio || existingFolio.value || 'Actualizado'
+                alert(`¡Éxito! El reporte ${folio} ha sido actualizado en la base de datos.`)
+                router.push({ name: 'report-detail', params: { id: editReportId.value } })
+            } else {
+                const res = await apiFetch('/reportes', {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                })
+
+                const folio = res.data?.folio || 'Nuevo'
+                alert(`¡Éxito! El reporte ${folio} ha sido guardado en la base de datos.`)
+                router.push({ name: 'reports' })
+            }
+        } catch (error: any) {
+            console.error('Error al guardar reporte:', error)
+            alert(error.message || 'Error al guardar el reporte técnico.')
+        } finally {
+            isSubmitting.value = false
+        }
     }
 
-const evidenFileInput = ref<HTMLInputElement | null>(null)
-const isDragOver = ref(false)
-const triggerFileInput = () => evidenFileInput.value?.click()
-const handleDragOver = () => { isDragOver.value = true }
-const handleDragLeave = () => { isDragOver.value = false }
-const handleDrop = (event: DragEvent) => {
-    isDragOver.value = false
-    const files = event.dataTransfer?.files
-    if (!files) return
-    const fakeEvent = { target: { files } } as unknown as Event
-    onFileChange(fakeEvent)
-}
-
+// Auto-resize textarea
 const autoResize = (event: Event) => {
     const target = event.target as HTMLTextAreaElement;
-    target.style.height = 'auto';
-    target.style.height = `${target.scrollHeight}px`;
+    target.style.height = 'auto'; // Reset height
+    target.style.height = `${target.scrollHeight}px`; // Set to scroll height
 };
 
+// Handle file upload for evidence photos with Base64 encoding for persistence
 const onFileChange = (event: Event) => {
     const input = event.target as HTMLInputElement
     if (!input.files) return
+
     const remaining = 10 - formData.evidenciaFotografica.length
     if (remaining <= 0) {
         alert('Máximo 10 fotos permitidas.')
         input.value = ''
         return
     }
+
     const filesToAdd = Array.from(input.files).slice(0, remaining)
     for (const file of filesToAdd) {
-        const blobUrl = URL.createObjectURL(file)
-        formData.evidenciaFotografica.push({ url: blobUrl, comentario: '' })
-        pendingFiles.value.push(file) // mapper.js enviará este File real
+        const reader = new FileReader()
+        reader.onload = (e) => {
+            const base64Url = e.target?.result as string
+            if (base64Url) {
+                formData.evidenciaFotografica.push({ url: base64Url, comentario: '' })
+            }
+        }
+        reader.readAsDataURL(file)
     }
+
+    // Reset input so the same file(s) can be selected again if needed
     input.value = ''
 }
 
+// Remove a single evidence image
 const removeEvidence = (index: number) => {
     const item = formData.evidenciaFotografica[index]
     if (item && item.url && item.url.startsWith('blob:')) URL.revokeObjectURL(item.url)
     formData.evidenciaFotografica.splice(index, 1)
-    pendingFiles.value.splice(index, 1)
 }
 
+// Image Preview Modal
 const previewUrl = ref<string | null>(null)
 </script>
 
@@ -255,10 +510,13 @@ const previewUrl = ref<string | null>(null)
     <div class="page-container-create-report">
         <!-- Header -->
         <div class="header-actions">
+            <button @click="router.back()" type="button" class="btn-back-header">
+                <ArrowLeft :size="16" />
+                <span>Regresar</span>
+            </button>
             <h2>
-                Crear Nuevo Reporte Técnico
+                {{ isEditMode ? `Editar Reporte Técnico — ${existingFolio}` : 'Crear Nuevo Reporte Técnico' }}
             </h2>
-            <button v-if="isModal" @click="emit('close')" class="btn-close-modal" title="Cerrar">×</button>
         </div>
 
         <form class="report-form" @submit.prevent>
@@ -274,20 +532,18 @@ const previewUrl = ref<string | null>(null)
                 <div class="grid-2-cols">
                     <!-- Tipo de Reporte -->
                     <div class="form-group">
-                        <label>Tipo de reporte *</label>
-                        <select v-model="formData.tipoReporte">
-                            <option value="Ticket">Ticket — falla reportada por cliente</option>
+                        <label>Tipo de reporte</label>
+                        <select v-model="formData.tipoReporte" @change="formData.origenDatosId = null; formData.fallaReportada = ''">
+                            <option value="Ticket">Ticket</option>
                             <option value="Servicio Programado">Servicio Programado / Proyecto</option>
-                            <option value="Libre">Libre — sin ticket ni servicio</option>
+                            <option value="Libre">Libre</option>
                         </select>
-                        <span class="format-hint">Formato: Ticket/Servicio/Libre — define si el reporte cierra un Ticket/Servicio</span>
                     </div>
 
                     <!-- Fecha de elaboración -->
                     <div class="form-group">
-                        <label>Fecha de elaboración *</label>
-                        <input type="datetime-local" v-model="formData.fechaElaboracion" />
-                        <span class="format-hint">Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 14:30</span>
+                        <label>Fecha de elaboración</label>
+                        <input type="date" v-model="formData.fechaElaboracion" />
                     </div>
 
                     <!-- Categoría del Trabajo -->
@@ -301,14 +557,12 @@ const previewUrl = ref<string | null>(null)
                             <option value="Mejora">Mejora</option>
                             <option value="Diagnóstico">Diagnóstico</option>
                         </select>
-                        <span class="format-hint">Ej: Correctivo = reparación de falla, Preventivo = mantenimiento programado</span>
                     </div>
 
                     <!-- Número de reporte -->
                     <div class="form-group">
                         <label>Número de reporte</label>
-                        <input type="text" value="Generado al guardar..." disabled class="input-disabled" />
-                        <span class="format-hint">Formato autogenerado: REP-2026-001</span>
+                        <input type="text" :value="isEditMode ? existingFolio : 'Generado al guardar...'" disabled class="input-disabled" />
                     </div>
 
                 </div>
@@ -327,7 +581,7 @@ const previewUrl = ref<string | null>(null)
                         </label>
                         
                         <!-- Select data function / Data source-->
-                        <select v-model="formData.origenDatosId">
+                        <select v-model="formData.origenDatosId" @change="handleOriginChange(formData.origenDatosId, false)">
                             
                             <!-- First Option: Null - Select an option-->
                             <option :value="null">
@@ -351,9 +605,8 @@ const previewUrl = ref<string | null>(null)
                             </template>
 
                         </select>
-                        <span class="format-hint">Formato: selecciona el folio origen (ej. TKT-2026-004) — al cerrar se actualiza a Resuelto/Realizado</span>
                     </div>
-                    <p v-else class="text-muted">Reporte libre seleccionado. No requiere origen de datos. Formato libre.</p>
+                    <p v-else class="text-muted">Reporte libre seleccionado. No requiere origen de datos.</p>
                 </div>
 
                 <!-- Es Retrabajo? (Bottom of section) -->
@@ -394,16 +647,14 @@ const previewUrl = ref<string | null>(null)
 
                     <!-- Responsable-->
                     <div class="form-group">
-                        <label>Responsable *</label>
+                        <label>Responsable</label>
                         <input type="text" v-model="formData.responsableTexto" placeholder="Ej. Ing. Juan Pérez" />
-                        <span class="format-hint">Formato: Nombre completo de quien recibe el trabajo — ej. Ing. Juan Pérez</span>
                     </div>
 
                     <!-- Cargo responsable -->
                     <div class="form-group">
                         <label>Cargo</label>
                         <input type="text" v-model="formData.cargoTexto" placeholder="Ej. Gerente de Planta" />
-                        <span class="format-hint">Formato: Cargo/puesto — ej. Gerente de Producción, Supervisor de Turno</span>
                     </div>
 
                 </div>
@@ -463,7 +714,7 @@ const previewUrl = ref<string | null>(null)
                         </button>
                         <!-- Text: Up to 4 executors-->
                         <span class="text-muted small">
-                            Hasta 4 ejecutores en total. (Actual: {{ formData.ejecutoresIds.length }}) — Formato: Nombre + No. Empleado (ej. EMP-004) + Cargo
+                            Hasta 4 ejecutores en total. (Actual: {{ formData.ejecutoresIds.length }})
                         </span>
                     </div>
 
@@ -482,33 +733,31 @@ const previewUrl = ref<string | null>(null)
                     <div class="form-group">
                         <label>Hora de salida base</label>
                         <input type="datetime-local" v-model="formData.horaSalidaBase" />
-                        <span class="format-hint">Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 08:00 (salida del taller)</span>
                     </div>
 
                     <div class="form-group">
                         <label>Hora de llegada a sitio</label>
                         <input type="datetime-local" v-model="formData.horaLlegadaSitio" />
-                        <span class="format-hint">Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 09:15 (llegada cliente)</span>
                     </div>
 
+                    <!-- Start time and date -->
                     <div class="form-group">
-                        <label>Hora de inicio trabajo *</label>
+                        <label>Hora de inicio trabajo</label>
                         <input type="datetime-local" v-model="formData.fechaHoraInicio" />
-                        <span class="format-hint">Obligatorio — Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 09:30</span>
                     </div>
                 </div>
 
                 <div class="grid-3-cols">
+                    <!-- End time and date -->
                     <div class="form-group">
-                        <label>Hora de fin trabajo *</label>
+                        <label>Hora de fin trabajo</label>
                         <input type="datetime-local" v-model="formData.fechaHoraFin" />
-                        <span class="format-hint">Obligatorio — debe ser posterior a inicio — ej. 2026-09-05 13:30</span>
                     </div>
 
                     <div class="form-group">
                         <label>Hora de regreso a base *</label>
                         <input type="datetime-local" v-model="formData.horaRegresoABase" />
-                        <span class="format-hint">Obligatorio al cerrar (finalizado) — Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 15:00</span>
+                        <span class="text-xs text-slate-500">Obligatorio al cerrar reporte</span>
                     </div>
 
                     <!-- Total hours calculated -->
@@ -520,9 +769,15 @@ const previewUrl = ref<string | null>(null)
 
                 <!-- F/S/Activitie label - Autofilled based on data origin or user input -->
                 <div class="form-group mt-1-5">
-                    <label>Descripción de la falla reportada</label>
-                    <input v-if="formData.tipoReporte !== 'Libre'" type="text" :value="asuntoOrigen" disabled class="input-disabled" />
-                    <input v-else type="text" v-model="formData.fallaReportada" placeholder="Escribe la descripción de la falla..." />
+                    <label>Descripción de la falla reportada *</label>
+                    <textarea
+                        v-model="formData.fallaReportada"
+                        rows="3"
+                        @input="autoResize"
+                        class="overflow-hidden"
+                        placeholder="Escribe o edita la descripción de la falla..."
+                    ></textarea>
+                    <span class="text-xs text-slate-500 mt-1">Este campo se prellena según el origen pero puedes editarlo libremente.</span>
                 </div>
             </div>            
 
@@ -550,7 +805,6 @@ const previewUrl = ref<string | null>(null)
                         class="overflow-hidden"
                         placeholder="Describe las actividades realizadas con detalle...">
                     </textarea>
-                    <span class="format-hint">Formato: texto libre detallado — ej. "Cambio de balata delantera, purga de sistema hidráulico, prueba de ruta 5km"</span>
 
                 </div>
 
@@ -571,7 +825,6 @@ const previewUrl = ref<string | null>(null)
                         </button>
 
                     </div>
-                    <span class="format-hint">Formato: Material del catálogo (ej. Cable AWG 12) + Cantidad (ej. 2.5) + Unidad (Pza/Metros/Litros) — descuenta stock automáticamente</span>
                     
                     <!-- Materials table -->
                     <div class="materials-table">
@@ -631,29 +884,53 @@ const previewUrl = ref<string | null>(null)
                 <!-- Photos container -->
                 <div class="form-group mt-1-5">
 
-                    <label>Fotos (máx 10) — Evidencias fotográficas</label>
+                    <!-- Subtitle and Actions -->
+                    <div class="section-header-flex mb-2">
+                        <label class="font-bold">Fotos (máx 10)</label>
+                        <button
+                            type="button"
+                            class="btn-outline btn-sm flex-center gap-1"
+                            @click="triggerFileInput"
+                            :disabled="formData.evidenciaFotografica.length >= 10"
+                        >
+                            <Camera :size="16" />
+                            <span>Agregar imagen</span>
+                        </button>
+                    </div>
 
-                    <input ref="evidenFileInput" type="file" multiple accept="image/*" @change="onFileChange" class="hidden-file-input" />
+                    <!-- Hidden native file input -->
+                    <input
+                        type="file"
+                        ref="fileInputRef"
+                        multiple
+                        accept="image/*"
+                        @change="onFileChange"
+                        style="display: none;"
+                    />
 
-                    <div class="file-drop-zone" :class="{ 'drag-over': isDragOver, 'has-files': formData.evidenciaFotografica.length > 0 }"
-                         @click="triggerFileInput" @dragover.prevent="handleDragOver" @dragleave="handleDragLeave" @drop.prevent="handleDrop">
-                        <div class="drop-icon-wrap">
-                            <div class="drop-icon">
-                                <ImageIcon :size="28" />
-                            </div>
-                            <div class="drop-icon-badge"><Camera :size="12" /></div>
-                        </div>
-                        <div class="drop-text">
-                            <span class="drop-title">Arrastra imágenes aquí o <span class="drop-link">haz clic para seleccionar</span></span>
-                            <span class="drop-subtitle">JPG · PNG · WebP — máx 10 fotos · ≤5MB c/u · {{ formData.evidenciaFotografica.length }}/10 — Formato back: <code>evidencias[]</code></span>
-                        </div>
-                        <div class="drop-action">
-                            <span class="btn-drop"><Upload :size="14" /> Seleccionar</span>
-                        </div>
+                    <!-- Empty state upload area -->
+                    <div
+                        v-if="formData.evidenciaFotografica.length === 0"
+                        class="empty-upload-card flex-center flex-col py-6 cursor-pointer"
+                        @click="triggerFileInput"
+                    >
+                        <Camera :size="32" class="text-slate-400 mb-2" />
+                        <span class="text-sm font-semibold text-blue-600 mb-1">Haz clic para agregar fotos o imágenes</span>
+                        <span class="text-muted small">Hasta 10 imágenes permitidas (aprox ≤ 25 KB/foto)</span>
+                        <button type="button" class="btn-outline btn-sm mt-3 flex-center gap-1">
+                            <Camera :size="14" />
+                            <span>Agregar imagen</span>
+                        </button>
+                    </div>
+
+                    <!-- Info and counter bar -->
+                    <div class="flex justify-between items-center mt-2">
+                        <span class="text-muted small">Salida aprox ≤ 25 KB/foto. Tamaño máximo visual ~8x8 cm</span>
+                        <span class="text-muted small font-medium">Fotos agregadas: {{ formData.evidenciaFotografica.length }} / 10</span>
                     </div>
 
                     <!-- Preview grid -->
-                    <div class="evidence-preview-grid" v-if="formData.evidenciaFotografica.length > 0">
+                    <div class="evidence-preview-grid mt-3" v-if="formData.evidenciaFotografica.length > 0">
                         <div class="evidence-item" v-for="(item, idx) in formData.evidenciaFotografica" :key="idx">
                             <div class="evidence-thumb" @click="previewUrl = item.url">
                                 <img :src="item.url" alt="Evidencia" title="Haz clic para previsualizar" />
@@ -704,9 +981,9 @@ const previewUrl = ref<string | null>(null)
             </div>
 
             <div class="form-actions">
-                <button v-if="isModal" type="button" @click="emit('close')" class="btn-cancelar">Cancelar</button>
-                <button class="btn-primary" @click="saveReport" :disabled="isSaving">
-                    {{ isSaving ? 'Guardando...' : 'Guardar Reporte' }}
+                <button type="button" class="btn-primary" :disabled="isSubmitting" @click="saveReport">
+                    <span v-if="isSubmitting">Guardando Reporte...</span>
+                    <span v-else>{{ isEditMode ? 'Guardar Cambios del Reporte' : 'Guardar Reporte' }}</span>
                 </button>
             </div>
 
@@ -730,9 +1007,25 @@ const previewUrl = ref<string | null>(null)
     .page-container-create-report { padding: 2rem; }
 }
 
-.header-actions { display: flex; flex-direction: column; gap: 1rem; align-items: stretch; margin-bottom: 2rem; }
-@media (min-width: 768px) {
-    .header-actions { flex-direction: row; justify-content: space-between; align-items: center; }
+.header-actions { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-start; margin-bottom: 2rem; }
+
+.btn-back-header {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    color: #475569;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-back-header:hover {
+    background: #e2e8f0;
+    color: #0f172a;
 }
 
 .form-actions { display: flex; justify-content: flex-end; margin-top: 2rem; }
@@ -771,29 +1064,6 @@ input, select { padding: 0.75rem; border: 1px solid #cbd5e1; border-radius: 6px;
 .disabled-box { opacity: 0.6; pointer-events: none; background: #f1f5f9; }
 .text-muted { color: #64748b; }
 .small { font-size: 0.875rem; }
-.format-hint { font-size: 0.72rem; color: #64748b; font-style: italic; margin-top: 0.25rem; display: block; line-height: 1.4; background: #f8fafc; border-left: 2px solid #cbd5e1; padding: 0.25rem 0.5rem; border-radius: 2px; }
-.hidden-file-input { display: none; }
-.file-drop-zone {
-    display: flex; align-items: center; gap: 1rem; padding: 1.25rem 1.5rem;
-    border: 2px dashed #cbd5e1; border-radius: 12px; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
-    cursor: pointer; transition: all 0.25s ease; position: relative; overflow: hidden;
-}
-.file-drop-zone:hover { border-color: #3b82f6; background: #eff6ff; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(59,130,246,0.15); }
-.file-drop-zone.drag-over { border-color: #3b82f6; background: #dbeafe; border-style: solid; transform: scale(1.01); box-shadow: 0 8px 20px rgba(59,130,246,0.2); }
-.file-drop-zone.has-files { border-color: #10b981; background: #f0fdf4; }
-.drop-icon-wrap { position: relative; flex-shrink: 0; }
-.drop-icon { width: 56px; height: 56px; border-radius: 12px; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: white; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(59,130,246,0.3); }
-.file-drop-zone.has-files .drop-icon { background: linear-gradient(135deg, #10b981 0%, #059669 100%); box-shadow: 0 4px 12px rgba(16,185,129,0.3); }
-.drop-icon-badge { position: absolute; bottom: -4px; right: -4px; width: 22px; height: 22px; border-radius: 50%; background: #f59e0b; color: white; display: flex; align-items: center; justify-content: center; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
-.drop-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25rem; }
-.drop-title { font-weight: 600; color: #0f172a; font-size: 0.95rem; }
-.drop-link { color: #3b82f6; text-decoration: underline; text-underline-offset: 2px; }
-.drop-subtitle { font-size: 0.78rem; color: #64748b; }
-.drop-subtitle code { background: #e2e8f0; padding: 0.1rem 0.3rem; border-radius: 4px; font-size: 0.7rem; }
-.drop-action { flex-shrink: 0; }
-.btn-drop { display: inline-flex; align-items: center; gap: 0.4rem; background: #0f172a; color: white; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600; font-size: 0.85rem; transition: background 0.2s; }
-.file-drop-zone:hover .btn-drop { background: #1e293b; }
-@media (max-width: 768px) { .file-drop-zone { flex-direction: column; text-align: center; } .drop-action { width: 100%; } .btn-drop { width: 100%; justify-content: center; } }
 
 /* Layout Utilities */
 .w-full { width: 100%; max-width: 100%; min-width: 0;}
@@ -881,6 +1151,22 @@ textarea { width: 100%; padding: 0.75rem; border: 1px solid #cbd5e1; border-radi
 .col-cant { width: 8rem; flex-shrink: 0; box-sizing: border-box; }
 .col-uni { width: 8rem; flex-shrink: 0; box-sizing: border-box; }
 .col-acc { width: 6rem; flex-shrink: 0; box-sizing: border-box; }
+
+.empty-upload-card {
+    border: 2px dashed #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+    text-align: center;
+    padding: 1.5rem;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.empty-upload-card:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+.gap-1 { gap: 0.25rem; }
+.gap-1-5 { gap: 0.375rem; }
 
 /* Evidence preview grid */
 .evidence-preview-grid {

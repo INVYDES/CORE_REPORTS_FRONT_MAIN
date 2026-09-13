@@ -1,56 +1,120 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import client from '../../../api/client'
-import { useToast } from 'vue-toastification'
+import { useAuthStore } from '../../../stores/authStore'
+import { getDependenciaName, mockSubdependencias } from '../../../data/mockDependencias'
 import { ArrowLeft, Star, Send } from 'lucide-vue-next'
+import { apiFetch } from '../../../api/apiClient'
 
 const route = useRoute()
 const router = useRouter()
-const toast = useToast()
-const reporte = ref<any>(null)
-const encuestaExistente = ref<any>(null)
+const authStore = useAuthStore()
+const currentUser = computed(() => authStore.currentUser)
+
+// Safety Check: Role 0 (Default User) is not allowed
+if (!currentUser.value || currentUser.value.rol === 0) {
+    router.replace({ name: 'dashboard' })
+}
+
+const idReporte = parseInt(route.params.id as string)
+const currentReport = ref<any>(null)
+const isLoading = ref(true)
+
+// Form state
+const isReadOnly = ref(false)
 const isSubmitted = ref(false)
-
-const form = reactive({ calificacion: 0, comentarios: '', nombreFirma: '' })
-
-const isReadOnly = computed(()=> !!encuestaExistente.value)
-const empresaName = computed(()=> reporte.value?.dependencia?.nombre || 'Empresa')
-const areaName = computed(()=> reporte.value?.area?.nombre || 'Área')
-const folioReporte = computed(()=> reporte.value?.folio || '')
-
-const setRating = (n:number)=> { if (!isReadOnly.value) form.calificacion = n }
-
-onMounted(async ()=>{
-    try {
-        const res = await client.get(`/reportes/${route.params.id}`).then(r=>r.data)
-        reporte.value = res
-        try {
-            const enc = await client.get('/encuestas', { params:{ reporte_id: route.params.id } }).then(r=>r.data)
-            const list = enc.data || enc || []
-            if (Array.isArray(list) && list.length) {
-                encuestaExistente.value = list[0]
-                form.calificacion = encuestaExistente.value.calificacion * 2
-                form.comentarios = encuestaExistente.value.comentario || ''
-                form.nombreFirma = encuestaExistente.value.respondido_por || ''
-            } else if (enc && enc.reporte_id) {
-                encuestaExistente.value = enc
-            }
-        } catch {}
-    } catch {}
+const form = ref({
+    calificacion: 0,
+    comentarios: '',
+    nombreFirma: ''
 })
 
-const submitSurvey = async ()=>{
-    if (!form.calificacion) { toast.error('Selecciona una calificación'); return }
-    if (!form.nombreFirma.trim()) { toast.error('Ingresa tu nombre'); return }
-    if (!reporte.value || reporte.value.estatus !== 'finalizado') { toast.error('Solo se puede encuestar un reporte finalizado'); return }
+// Header Info
+const empresaName = computed(() => currentReport.value ? getDependenciaName(currentReport.value.idDependencia) : 'Desconocida')
+const areaName = computed(() => {
+    if (!currentReport.value || !currentReport.value.idSubdependencia) return 'N/A'
+    if (currentReport.value.nombreSubdependencia) return currentReport.value.nombreSubdependencia
+    const sub = mockSubdependencias.find(s => s.idSubdependencia === currentReport.value.idSubdependencia)
+    return sub ? sub.nombre : 'N/A'
+})
+const folioReporte = computed(() => currentReport.value?.folio || 'N/A')
+
+const fetchSurveyData = async () => {
+    isLoading.value = true
     try {
-        const cal5 = Math.max(1, Math.min(5, Math.ceil(form.calificacion / 2)))
-        await client.post('/encuestas', { reporte_id: reporte.value.id, calificacion: cal5, comentario: form.comentarios, respondido_por: form.nombreFirma })
+        const repRes = await apiFetch(`/reportes/${idReporte}`)
+        if (repRes.data) {
+            currentReport.value = repRes.data
+        }
+
+        // Try fetching existing survey
+        try {
+            const surveyRes = await apiFetch(`/encuestas/${idReporte}`)
+            if (surveyRes.data) {
+                isReadOnly.value = true
+                form.value.calificacion = surveyRes.data.calificacion
+                form.value.comentarios = surveyRes.data.comentarios || ''
+                form.value.nombreFirma = surveyRes.data.nombreFirma || ''
+            }
+        } catch {
+            // No survey yet, ready to fill
+            isReadOnly.value = false
+        }
+    } catch (error) {
+        console.error('Error al cargar reporte para encuesta:', error)
+        alert('Reporte no encontrado o no autorizado')
+        router.back()
+    } finally {
+        isLoading.value = false
+    }
+}
+
+onMounted(() => {
+    fetchSurveyData()
+})
+
+const setRating = (rating: number) => {
+    if (isReadOnly.value) return;
+    form.value.calificacion = rating
+}
+
+const submitSurvey = async () => {
+    if (isReadOnly.value) return;
+
+    if (form.value.calificacion === 0) {
+        alert("Por favor selecciona una calificación del 1 al 10.")
+        return
+    }
+
+    if (!form.value.nombreFirma.trim()) {
+        alert("Por favor ingresa tu nombre para firmar la encuesta.")
+        return
+    }
+
+    try {
+        await apiFetch('/encuestas', {
+            method: 'POST',
+            body: JSON.stringify({
+                idReporte: idReporte,
+                calificacion: form.value.calificacion,
+                comentarios: form.value.comentarios,
+                nombreFirma: form.value.nombreFirma
+            })
+        })
+
         isSubmitted.value = true
-        toast.success('Encuesta enviada')
-        setTimeout(()=> router.push({ name:'report-detail', params:{ id: reporte.value.id } }), 1200)
-    } catch(e:any){ toast.error(e?.response?.data?.message || JSON.stringify(e?.response?.data?.errors) || 'Error') }
+        isReadOnly.value = true
+        setTimeout(() => {
+            if (currentUser.value?.rol === 2) {
+                router.push({ name: 'dashboard' })
+            } else {
+                router.push({ name: 'report-detail', params: { id: idReporte } })
+            }
+        }, 2500)
+    } catch (error: any) {
+        console.error('Error al guardar encuesta:', error)
+        alert(error.message || 'Error al guardar la evaluación.')
+    }
 }
 </script>
 

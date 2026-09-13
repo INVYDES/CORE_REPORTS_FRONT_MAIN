@@ -22,7 +22,7 @@ try {
     const cleanStr = arrayStr
         .replace(/\/\/.*$/gm, '') // remove line comments
         .replace(/\/\*[\s\S]*?\*\//gm, ''); // remove block comments
-        
+
     // using Function instead of eval for slight safety, though it's local mocks
     reports = new Function('return ' + cleanStr)();
 } catch (e) {
@@ -45,10 +45,10 @@ reports.forEach(r => {
             r.horaRegresoABase = new Date(end.getTime() + (Math.random() * 60 + 30) * 60000).toISOString().slice(0, 16);
         }
     }
-    
+
     // Retrabajo? ~15% chance
     r.esRetrabajo = Math.random() < 0.15;
-    
+
     // Descartado? Overwrite status for ~5% chance
     if (Math.random() < 0.05) {
         r.estatusReporte = 'Descartado / Cancelado';

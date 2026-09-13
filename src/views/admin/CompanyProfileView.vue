@@ -1,11 +1,9 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
 import { storeToRefs } from 'pinia'
-import client from '../../api/client'
-import { useToast } from 'vue-toastification'
+import { apiFetch } from '../../api/apiClient'
 import { 
     Building2, 
     User, 
@@ -14,106 +12,167 @@ import {
     Users, 
     Settings,
     Save,
+    Send,
     CreditCard
 } from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const { currentUser } = storeToRefs(authStore)
-const toast = useToast()
 
-// 1. Security & Access Control
-if (!currentUser.value || currentUser.value?.rol !== 2) {
+// 1. Security & Access Control: Roles 1 y 2 (Administradores)
+if (!currentUser.value || (currentUser.value.rol !== 1 && currentUser.value.rol !== 2)) {
     router.push({ name: 'dashboard' })
 }
 
-const depId = computed(() => (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia)
-
-const planLabel = (code: string) => ({ trial: 'Trial', mensual: 'Mensual', anual: 'Anual' } as any)[code] || code || '—'
-const tierLabel = (limit: number) => {
-    if (!limit) return 'Básico'
-    if (limit <= 5) return 'Básico'
-    if (limit <= 20) return 'Intermedio'
-    return 'Empresa'
-}
-const fmtDate = (d: string) => (d ? String(d).slice(0, 10) : '—')
-
-// 2. Company data loaded from the API (camelCase view model)
-const company = ref<any>(null)
-const savingCompany = ref(false)
-
-const mapCompany = (raw: any) => {
-    if (!raw) return null
-    return {
-        idDependencia: raw.id,
-        nombre: raw.nombre || '',
-        correoContacto: raw.correo_contacto || '',
-        correoReportes: raw.correo_reportes || '',
-        telefono: raw.telefono || '',
-        tipoLicencia: planLabel(raw.tipo_licencia),
-        fechaExpiracionLicencia: fmtDate(raw.fecha_expiracion),
-        limiteUsuarios: raw.limite_usuarios || 0,
-        nivelUsuarios: tierLabel(raw.limite_usuarios)
-    }
-}
-
-const loadCompany = async () => {
-    if (!depId.value) return
-    try {
-        const res = await client.get(`/dependencias/${depId.value}`).then(r => r.data)
-        company.value = mapCompany(res.data || res)
-    } catch {
-        company.value = null
-    }
-}
-
-const saveCompany = async () => {
-    if (!company.value) return
-    savingCompany.value = true
-    try {
-        const res = await client.put(`/dependencias/${company.value.idDependencia}`, {
-            correo_contacto: company.value.correoContacto,
-            correo_reportes: company.value.correoReportes,
-            telefono: company.value.telefono
-        }).then(r => r.data)
-        company.value = mapCompany(res.data || res)
-        toast.success('Datos de la empresa actualizados')
-    } catch (e: any) {
-        toast.error(e?.response?.data?.message || 'No se pudieron guardar los datos')
-    } finally {
-        savingCompany.value = false
-    }
-}
-
-// 3. Team members: real users of this dependencia
-const localUsers = ref<any[]>([])
-
-const mapUser = (u: any) => ({
-    idUsuario: u.id,
-    idDependencia: u.dependencia_id,
-    numeroEmpleado: u.numero_empleado || `EMP-${String(u.id).padStart(3, '0')}`,
-    rol: Number(u.rol),
-    nombre: u.nombre || '',
-    apellidos: u.apellidos || '',
-    correo: u.email || '',
-    estado: u.estado ? 1 : 0,
-    fechaCreacion: u.created_at,
-    ultimoAcceso: u.ultimo_acceso
+// 2. Estado de la empresa desde MySQL
+const company = ref<any>({
+    idDependencia: currentUser.value?.idDependencia || 1,
+    nombre: currentUser.value?.empresa?.nombre || 'Mi Empresa',
+    rfc: currentUser.value?.empresa?.rfc || '',
+    tipoLicencia: 'Prueba gratuita',
+    fechaExpiracionLicencia: '',
+    correoContacto: currentUser.value?.correo || '',
+    correoReportes: '',
+    telefono: '',
+    datosFacturacion: '',
+    activo: true,
+    fechaRegistro: '',
+    nivelUsuarios: 'Básico',
+    limiteUsuarios: 5,
+    logo: currentUser.value?.empresa?.logo || ''
 })
 
-const loadUsers = async () => {
+const isLoadingCompany = ref(false)
+const isSavingCompany = ref(false)
+const isUploadingLogo = ref(false)
+const logoInputRef = ref<HTMLInputElement | null>(null)
+
+const fetchCompany = async () => {
+    isLoadingCompany.value = true
     try {
-        const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r => r.data)
-        const list = res.data || res || []
-        localUsers.value = Array.isArray(list) ? list.map(mapUser) : []
-    } catch {
-        localUsers.value = []
+        const res = await apiFetch('/empresa')
+        if (res.data) {
+            company.value = { ...company.value, ...res.data }
+            if (currentUser.value && currentUser.value.empresa) {
+                currentUser.value.empresa.logo = res.data.logo
+                currentUser.value.empresa.nombre = res.data.nombre
+            }
+        }
+    } catch (err) {
+        console.error('Error al cargar datos de empresa:', err)
+    } finally {
+        isLoadingCompany.value = false
     }
 }
 
-const teamMembers = computed(() => localUsers.value)
+const triggerLogoInput = () => {
+    logoInputRef.value?.click()
+}
+
+const onLogoFileChange = async (event: Event) => {
+    const input = event.target as HTMLInputElement
+    if (!input.files || input.files.length === 0) return
+
+    const file = input.files[0]
+    if (file.size > 4 * 1024 * 1024) {
+        alert('La imagen no debe superar los 4 MB.')
+        input.value = ''
+        return
+    }
+
+    isUploadingLogo.value = true
+    try {
+        const reader = new FileReader()
+        reader.onload = async (e) => {
+            const base64 = e.target?.result as string
+            if (!base64) return
+
+            // Vista previa inmediata
+            company.value.logo = base64
+
+            const res = await apiFetch('/empresa/logo', {
+                method: 'POST',
+                body: JSON.stringify({ logo: base64 })
+            })
+
+            if (res.data?.logo) {
+                company.value.logo = res.data.logo
+                if (currentUser.value && currentUser.value.empresa) {
+                    currentUser.value.empresa.logo = res.data.logo
+                }
+                alert('¡Logotipo de la empresa actualizado con éxito! Ahora saldrá en el encabezado de todos los reportes de tu empresa.')
+            }
+        }
+        reader.readAsDataURL(file)
+    } catch (err: any) {
+        console.error('Error al subir logotipo:', err)
+        alert('Error: ' + (err.message || 'No se pudo subir el logotipo al servidor.'))
+    } finally {
+        isUploadingLogo.value = false
+        input.value = ''
+    }
+}
+
+const saveCompanyInfo = async () => {
+    isSavingCompany.value = true
+    try {
+        const res = await apiFetch('/empresa', {
+            method: 'PUT',
+            body: JSON.stringify({
+                nombre: company.value.nombre,
+                correoContacto: company.value.correoContacto,
+                correoReportes: company.value.correoReportes,
+                telefono: company.value.telefono,
+                datosFacturacion: company.value.datosFacturacion
+            })
+        })
+
+        if (res.data) {
+            company.value = { ...company.value, ...res.data }
+            if (currentUser.value && currentUser.value.empresa) {
+                currentUser.value.empresa.nombre = res.data.nombre
+            }
+            alert('¡Datos de la empresa actualizados exitosamente!')
+        }
+    } catch (err: any) {
+        console.error('Error al actualizar datos de empresa:', err)
+        alert('Error: ' + (err.message || 'No se pudo actualizar la información.'))
+    } finally {
+        isSavingCompany.value = false
+    }
+}
+
+// Usuarios reales desde Laravel API
+const localUsers = ref<any[]>([])
+const isLoadingUsers = ref(true)
+const isSavingUser = ref(false)
+
+const fetchUsers = async () => {
+    isLoadingUsers.value = true
+    try {
+        const res = await apiFetch('/usuarios')
+        if (res.data) {
+            localUsers.value = res.data
+        }
+    } catch (err: any) {
+        console.error('Error al cargar usuarios:', err)
+    } finally {
+        isLoadingUsers.value = false
+    }
+}
+
+onMounted(() => {
+    fetchUsers()
+    fetchCompany()
+})
+
+const teamMembers = computed(() => {
+    return localUsers.value
+})
 
 const usedSeats = computed(() => {
+    if (!company.value) return 0
     return localUsers.value.filter(u => u.estado === 1 && u.rol === 3).length
 })
 
@@ -124,13 +183,12 @@ const seatsPercentage = computed(() => {
 
 // Current user details to populate the admin field
 const adminName = computed(() => {
-    const name = currentUser.value ? `${(currentUser.value as any)?.nombre ?? ''} ${(currentUser.value as any)?.apellidos ?? ''}`.trim() : ''
-    return name || 'N/A'
+    return currentUser.value ? `${currentUser.value.nombre} ${currentUser.value.apellidos}` : 'N/A'
 })
 
 // Helper to get role text
 const getRoleText = (rol: number) => {
-    switch (Number(rol)) {
+    switch(rol) {
         case 0: return 'Usuario Básico'
         case 1: return 'Administrador Técnico'
         case 2: return 'Administrador Comercial'
@@ -138,6 +196,22 @@ const getRoleText = (rol: number) => {
         default: return 'Desconocido'
     }
 }
+
+// SMTP Form State (mock)
+const smtpConfig = ref({
+    enabled: true,
+    authRequired: true,
+    host: 'smtp.office365.com',
+    port: '587',
+    security: 'STARTTLS',
+    user: 'reportes@miempresa.com',
+    password: 'password123',
+    senderName: 'Notificaciones Sistema',
+    replyTo: 'soporte@miempresa.com'
+})
+
+// UI State
+const showPassword = ref(false)
 
 // User Modal State
 const isUserModalOpen = ref(false)
@@ -181,59 +255,61 @@ const openModalForEdit = (user: any) => {
 }
 
 const saveUser = async () => {
-    if (!userForm.value.nombre || !userForm.value.apellidos || !userForm.value.correo) {
-        toast.warning('Completa nombre, apellidos y correo')
-        return
-    }
+    if (isSavingUser.value) return
+    isSavingUser.value = true
+
     try {
         if (isEditing.value) {
-            await client.put(`/usuarios/${userForm.value.idUsuario}`, {
+            const payload: any = {
                 nombre: userForm.value.nombre,
                 apellidos: userForm.value.apellidos,
-                email: userForm.value.correo,
-                rol: userForm.value.rol,
-                numero_empleado: userForm.value.numeroEmpleado || null
-            })
-            toast.success('Usuario actualizado')
-        } else {
-            if (!userForm.value.password || userForm.value.password.length < 6) {
-                toast.warning('La contraseña debe tener al menos 6 caracteres')
-                return
+                correo: userForm.value.correo,
+                numeroEmpleado: userForm.value.numeroEmpleado,
+                rol: Number(userForm.value.rol)
             }
-            await client.post('/usuarios', {
-                nombre: userForm.value.nombre,
-                apellidos: userForm.value.apellidos,
-                email: userForm.value.correo,
-                password: userForm.value.password,
-                rol: userForm.value.rol,
-                numero_empleado: userForm.value.numeroEmpleado || null
+            if (userForm.value.password) {
+                payload.password = userForm.value.password
+            }
+
+            const res = await apiFetch(`/usuarios/${userForm.value.idUsuario}`, {
+                method: 'PUT',
+                body: JSON.stringify(payload)
             })
-            toast.success('Usuario creado correctamente')
+
+            if (res.data) {
+                const index = localUsers.value.findIndex(u => u.idUsuario === userForm.value.idUsuario)
+                if (index !== -1) {
+                    localUsers.value[index] = res.data
+                }
+                alert('¡Usuario actualizado exitosamente en MySQL!')
+                isUserModalOpen.value = false
+            }
+        } else {
+            const res = await apiFetch('/usuarios', {
+                method: 'POST',
+                body: JSON.stringify({
+                    nombre: userForm.value.nombre,
+                    apellidos: userForm.value.apellidos,
+                    correo: userForm.value.correo,
+                    password: userForm.value.password,
+                    rol: Number(userForm.value.rol),
+                    numeroEmpleado: userForm.value.numeroEmpleado
+                })
+            })
+
+            if (res.data) {
+                localUsers.value.push(res.data)
+                alert(`¡Usuario ${res.data.nombre} (${getRoleText(res.data.rol)}) registrado exitosamente en MySQL!`)
+                isUserModalOpen.value = false
+            }
         }
-        isUserModalOpen.value = false
-        await loadUsers()
-    } catch (e: any) {
-        toast.error(e?.response?.data?.message || 'No se pudo guardar el usuario')
+    } catch (err: any) {
+        console.error('Error al guardar usuario:', err)
+        alert('Error: ' + (err.message || 'No se pudo guardar el usuario en el servidor.'))
+    } finally {
+        isSavingUser.value = false
     }
 }
-
-const removeUser = async (idUsuario: number) => {
-    if (!confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.')) return
-    try {
-        await client.delete(`/usuarios/${idUsuario}`)
-        toast.success('Usuario eliminado')
-        isUserModalOpen.value = false
-        await loadUsers()
-    } catch (e: any) {
-        toast.error(e?.response?.data?.message || 'No se pudo eliminar el usuario')
-    }
-}
-
-const showPlanInfo = () => {
-    toast.info('El cambio de plan se gestiona con soporte. Contáctanos para ampliar tu licencia.')
-}
-
-onMounted(() => { loadCompany(); loadUsers() })
 
 </script>
 
@@ -250,9 +326,15 @@ onMounted(() => { loadCompany(); loadUsers() })
         <div v-if="company" class="dashboard-grid">
             <!-- SECTION A: Datos de empresa -->
             <section class="settings-section">
-                <div class="section-header">
-                    <Building2 class="text-blue-600" :size="20"/>
-                    <h3>Datos de la Empresa</h3>
+                <div class="section-header flex justify-between items-center">
+                    <div class="flex items-center gap-2">
+                        <Building2 class="text-blue-600" :size="20"/>
+                        <h3>Datos de la Empresa</h3>
+                    </div>
+                    <button @click="saveCompanyInfo" :disabled="isSavingCompany" class="btn-primary text-xs flex items-center gap-1.5 py-1.5 px-3">
+                        <Save :size="14"/>
+                        <span>{{ isSavingCompany ? 'Guardando...' : 'Guardar Información' }}</span>
+                    </button>
                 </div>
                 
                 <div class="section-body card">
@@ -260,15 +342,20 @@ onMounted(() => { loadCompany(); loadUsers() })
                         <!-- Left Side: Inputs -->
                         <div class="inputs-area">
                             <div class="form-group">
-                                <label>Empresa</label>
+                                <label>Nombre de la Empresa</label>
                                 <div class="input-with-icon">
                                     <Building2 :size="16" class="icon-input" />
-                                    <input type="text" :value="company.nombre" readonly class="readonly-input" />
+                                    <input type="text" v-model="company.nombre" class="editable-input" />
                                 </div>
                             </div>
 
                             <div class="form-group">
-                                <label>Administrador Comercial</label>
+                                <label>RFC</label>
+                                <input type="text" :value="company.rfc" readonly class="readonly-input font-mono" />
+                            </div>
+
+                            <div class="form-group">
+                                <label>Administrador</label>
                                 <div class="input-with-icon">
                                     <User :size="16" class="icon-input" />
                                     <input type="text" :value="adminName" readonly class="readonly-input" />
@@ -279,19 +366,49 @@ onMounted(() => { loadCompany(); loadUsers() })
                                 <label>Correo de Contacto</label>
                                 <div class="input-with-icon">
                                     <Mail :size="16" class="icon-input" />
-                                    <input type="email" :value="company.correoContacto" readonly class="readonly-input" />
+                                    <input type="email" v-model="company.correoContacto" class="editable-input" />
                                 </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Teléfono</label>
+                                <input type="text" v-model="company.telefono" class="editable-input" placeholder="Ej. 442-123-4567" />
                             </div>
                         </div>
 
                         <!-- Right Side: Logo Upload -->
                         <div class="logo-area">
-                            <label class="block mb-2 font-medium text-slate-700 text-sm">Logotipo de la empresa</label>
-                            <div class="upload-box border-dashed">
+                            <label class="block mb-2 font-medium text-slate-700 text-sm">Logotipo de la empresa (Para reportes impresos y PDF)</label>
+                            <input 
+                                type="file" 
+                                ref="logoInputRef" 
+                                accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml" 
+                                class="hidden" 
+                                @change="onLogoFileChange" 
+                            />
+                            
+                            <div v-if="company.logo" class="border-2 border-dashed border-slate-300 rounded-xl p-4 bg-slate-50 flex flex-col items-center justify-center relative group min-h-[160px]">
+                                <img :src="company.logo" alt="Logo empresa" class="max-h-24 max-w-full object-contain mb-3 rounded shadow-sm bg-white p-2 border border-slate-200" />
+                                <div class="flex items-center gap-3">
+                                    <button 
+                                        @click="triggerLogoInput" 
+                                        :disabled="isUploadingLogo" 
+                                        class="btn-outline text-xs flex items-center gap-1 py-1.5 px-3 bg-white hover:bg-blue-50 hover:border-blue-300"
+                                    >
+                                        <UploadCloud :size="14" class="text-blue-600"/>
+                                        <span>{{ isUploadingLogo ? 'Subiendo...' : 'Cambiar Logotipo' }}</span>
+                                    </button>
+                                </div>
+                                <span class="text-xs text-slate-400 mt-2">Este logo aparecerá en el encabezado de tus reportes</span>
+                            </div>
+
+                            <div v-else @click="triggerLogoInput" class="upload-box border-dashed cursor-pointer hover:bg-blue-50/50 hover:border-blue-400 transition-all min-h-[160px] flex flex-col items-center justify-center">
                                 <UploadCloud :size="32" class="text-slate-400 mb-2"/>
-                                <span class="text-sm text-blue-600 font-semibold cursor-pointer py-1">Haz clic para subir</span>
-                                <span class="text-xs text-slate-500 mt-1">o arrastra y suelta tu imagen aquí</span>
-                                <span class="text-xs text-slate-400 mt-2">PNG o JPG (Max 2MB)</span>
+                                <span class="text-sm text-blue-600 font-semibold py-1">
+                                    {{ isUploadingLogo ? 'Subiendo imagen...' : 'Haz clic para subir logotipo' }}
+                                </span>
+                                <span class="text-xs text-slate-500 mt-1">o arrastra tu archivo PNG, JPG o SVG</span>
+                                <span class="text-xs text-slate-400 mt-2">Máximo 4MB (Recomendado fondo transparente)</span>
                             </div>
                         </div>
                     </div>
@@ -346,8 +463,8 @@ onMounted(() => { loadCompany(); loadUsers() })
                                 <div class="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0 text-amber-600">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
                                 </div>
-                                <button @click="showPlanInfo" class="text-amber-800 font-bold text-sm text-left hover:underline">
-                                    Límite alcanzado. Contacta a soporte para ampliar tu plan
+                                <button class="text-amber-800 font-bold text-sm text-left hover:underline">
+                                    Límite alcanzado. Actualizar al Plan Intermedio (hasta 20 usuarios)
                                 </button>
                             </div>
                         </div>
@@ -387,41 +504,88 @@ onMounted(() => { loadCompany(); loadUsers() })
                 </div>
             </section>
 
-            <!-- SECTION D: Configuración de correo -->
+            <!-- SECTION D: Configuración SMTP -->
             <section class="settings-section">
                 <div class="section-header">
                     <Settings class="text-emerald-600" :size="20"/>
-                    <h3>Configuración de Correo (Envío de reportes)</h3>
+                    <h3>Configuración SMTP (Envío de reportes)</h3>
                 </div>
                 
                 <div class="section-body card">
-                    <p class="text-sm text-slate-500 mb-5">
-                        El servidor SMTP se configura a nivel del backend (variables <code class="text-slate-700 bg-slate-100 px-1 rounded">MAIL_*</code>).
-                        Aquí defines los correos de tu empresa que se usan como contacto y como destino de los reportes.
-                    </p>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        <div class="form-group">
-                            <label>Correo de Contacto</label>
-                            <input type="email" v-model="company.correoContacto" class="editable-input w-full" placeholder="contacto@tuempresa.com"/>
+                    <div class="form-block">
+                        <div class="checkbox-row mb-6 pb-4 border-b border-slate-100 flex gap-6">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" v-model="smtpConfig.enabled" class="rounded text-blue-600 focus:ring-blue-500"/>
+                                <span class="text-sm font-medium text-slate-700">Habilitar SMTP</span>
+                            </label>
+                            
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" v-model="smtpConfig.authRequired" :disabled="!smtpConfig.enabled" class="rounded text-blue-600 focus:ring-blue-500"/>
+                                <span class="text-sm font-medium text-slate-700" :class="{'opacity-50': !smtpConfig.enabled}">Requiere autenticación</span>
+                            </label>
                         </div>
 
-                        <div class="form-group">
-                            <label>Correo para Reportes</label>
-                            <input type="email" v-model="company.correoReportes" class="editable-input w-full" placeholder="reportes@tuempresa.com"/>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-5 transition-opacity" :class="{'opacity-50 pointer-events-none': !smtpConfig.enabled}">
+                            <div class="form-group">
+                                <label>Servidor SMTP (Host)</label>
+                                <input type="text" v-model="smtpConfig.host" class="editable-input w-full" placeholder="ej. smtp.tudominio.com"/>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Puerto</label>
+                                <input type="text" v-model="smtpConfig.port" class="editable-input w-full" placeholder="ej. 587"/>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Seguridad</label>
+                                <select v-model="smtpConfig.security" class="editable-input w-full">
+                                    <option value="NONE">Ninguna</option>
+                                    <option value="STARTTLS">STARTTLS</option>
+                                    <option value="SSL/TLS">SSL/TLS</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Usuario SMTP</label>
+                                <input type="text" v-model="smtpConfig.user" class="editable-input w-full" :disabled="!smtpConfig.authRequired"/>
+                            </div>
+                            
+                            <div class="form-group relative">
+                                <label>Contraseña SMTP</label>
+                                <div class="relative">
+                                    <input :type="showPassword ? 'text' : 'password'" v-model="smtpConfig.password" class="editable-input w-full" :disabled="!smtpConfig.authRequired"/>
+                                    <button @click="showPassword = !showPassword" type="button" class="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600">
+                                        <!-- Eye Icon placeholder -->
+                                        <svg v-if="!showPassword" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+                                        <svg v-else xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>Teléfono</label>
-                            <input type="text" v-model="company.telefono" class="editable-input w-full" placeholder="(000) 000-0000"/>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mt-5 transition-opacity" :class="{'opacity-50 pointer-events-none': !smtpConfig.enabled}">
+                            <div class="form-group">
+                                <label>Nombre del Remitente</label>
+                                <input type="text" v-model="smtpConfig.senderName" class="editable-input w-full" placeholder="Nombre que verán los clientes"/>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label>Responder a (Reply-To)</label>
+                                <input type="text" v-model="smtpConfig.replyTo" class="editable-input w-full" placeholder="Correo para recibir respuestas"/>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Footer Actions -->
                     <div class="smtp-actions mt-8 pt-5 border-t border-slate-100 flex flex-wrap gap-3 items-center justify-end">
-                        <button class="btn-primary flex items-center gap-2" @click="saveCompany" :disabled="savingCompany">
+
+                        <button class="btn-outline flex items-center gap-2">
+                            <Send :size="16"/>
+                            Probar envío de correo
+                        </button>
+                        <button class="btn-primary flex items-center gap-2">
                             <Save :size="16"/>
-                            {{ savingCompany ? 'Guardando...' : 'Guardar Cambios' }}
+                            Guardar Configuración
                         </button>
                     </div>
                 </div>
@@ -483,9 +647,7 @@ onMounted(() => { loadCompany(); loadUsers() })
                         </div>
                     </div>
                     
-                    <div class="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end gap-3">
-                        <button v-if="isEditing && userForm.idUsuario !== (currentUser as any)?.id" @click="removeUser(userForm.idUsuario)" class="btn-outline text-red-600 border-red-200 hover:bg-red-50">Eliminar Usuario</button>
-                        <div class="flex-1"></div>
+                    <div class="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
                         <button @click="isUserModalOpen = false" class="btn-outline">Cancelar</button>
                         <button @click="saveUser" class="btn-primary">Guardar Usuario</button>
                     </div>

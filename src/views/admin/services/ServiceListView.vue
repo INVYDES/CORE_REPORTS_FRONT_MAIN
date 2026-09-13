@@ -1,62 +1,72 @@
 <script setup lang="ts">
-// @ts-nocheck
-    import { ref, onMounted, computed } from 'vue'
+    import { ref, computed, onMounted } from 'vue'
     import { useRouter } from 'vue-router'
-    import { Search, Filter, ChevronRight, X} from 'lucide-vue-next'
-
-
-    // Import global data
-    import { mockServices } from '../../../data/mockServicios'
-import client from '../../../api/client'
-
+    import { Search, Filter, ChevronRight, X, FileText, FileEdit } from 'lucide-vue-next'
+    import { useAuthStore } from '../../../stores/authStore'
+    import { storeToRefs } from 'pinia'
+    import { apiFetch } from '../../../api/apiClient'
     import type { Service } from '../../../data/mockServicios'
 
-    const router = useRouter()
-    const services = ref<Service[]>(mockServices)
+    const authStore = useAuthStore()
+    const { currentUser } = storeToRefs(authStore)
 
-    const statusLabel = (code: string) => ({ programado: 'Programado', en_proceso: 'En Proceso', realizado: 'Realizado', vencido: 'Vencido' } as any)[code] || code
-    const priorityLabel = (code: string | null) => ({ alta: 'Alta', media: 'Media', baja: 'Baja' } as any)[code || ''] || code || ''
-    const fmtShort = (iso?: string | null) => (iso ? String(iso).replace('T', ' ').slice(0, 16) : '')
+    const router = useRouter()
+    const services = ref<Service[]>([])
+    const reportes = ref<any[]>([])
+    const isLoading = ref(true)
 
     const fetchServices = async () => {
+        isLoading.value = true
         try {
-            const res = await client.get('/servicios', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res
-            if (Array.isArray(list) && list.length) {
-                services.value = list.map((x: any) => ({
-                    id: x.id,
-                    idDependencia: x.dependencia_id,
-                    folio: x.folio,
-                    asunto: x.asunto,
-                    descripcion: x.descripcion || '',
-                    categoria: x.categoria,
-                    estatus: statusLabel(x.estatus),
-                    prioridad: priorityLabel(x.prioridad),
-                    fechaAsignacion: fmtShort(x.fecha_asignacion),
-                    fechaVencimiento: fmtShort(x.fecha_vencimiento),
-                    asignadoA: x.asignado ? `${x.asignado.nombre || ''} ${x.asignado.apellidos || ''}`.trim() : ''
-                }))
-            }
-        } catch {}
+            const [sRes, rRes] = await Promise.all([
+                apiFetch('/servicios'),
+                apiFetch('/reportes').catch(() => ({ data: [] }))
+            ])
+            if (sRes.data) services.value = sRes.data
+            if (rRes.data) reportes.value = rRes.data
+        } catch (err) {
+            console.error('Error al cargar servicios:', err)
+        } finally {
+            isLoading.value = false
+        }
     }
-    onMounted(fetchServices)
+
+    onMounted(() => {
+        fetchServices()
+    })
 
     // Filter state
     const searchQuery = ref('')
     const statusFilter = ref('')
     const dateFilter = ref('')
 
-    // Filtered services
+    // Filtered services (Punto 3: Solo rol 1 y 2 ven todo; otros solo ven asignados)
     const filteredServices = computed(() => {
         return services.value.filter(service => {
-            const q = searchQuery.value.toLowerCase()
-            const matchesSearch = searchQuery.value === '' ||
-                (service.asunto || '').toLowerCase().includes(q) ||
-                (service.descripcion || '').toLowerCase().includes(q)
+            if (currentUser.value?.idDependencia && (service as any).idDependencia && (service as any).idDependencia !== currentUser.value.idDependencia) {
+                return false
+            }
 
+            // Restricción por rol
+            if (currentUser.value && currentUser.value.rol !== 1 && currentUser.value.rol !== 2) {
+                const userFullName = `${currentUser.value.nombre} ${currentUser.value.apellidos}`.trim().toLowerCase()
+                const userName = (currentUser.value.nombre || '').trim().toLowerCase()
+                const asignadoText = (service.asignadoA || '').toLowerCase()
+                const techId = (service as any).idTecnicoAsignado || (service as any).id_tecnico_asignado
+
+                const isAssigned = (techId && techId === currentUser.value.idUsuario) ||
+                                   (asignadoText && (asignadoText.includes(userFullName) || asignadoText.includes(userName)))
+                if (!isAssigned) {
+                    return false
+                }
+            }
+
+            const matchesSearch = service.asunto.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+                                  service.descripcion.toLowerCase().includes(searchQuery.value.toLowerCase())
+            
             const matchesStatus = statusFilter.value === '' || service.estatus === statusFilter.value
 
-            const matchesDate = dateFilter.value === '' || (service.fechaVencimiento || '').slice(0, 10) === dateFilter.value
+            const matchesDate = dateFilter.value === '' || service.fechaVencimiento === dateFilter.value
 
             return matchesSearch && matchesStatus && matchesDate
         })
@@ -80,6 +90,24 @@ import client from '../../../api/client'
     // Navigation Details
     const viewServiceDetails = (id: number) => {
         router.push({ name: 'service-detail', params: { id: id } })
+    }
+
+    // Navegar directamente a generar reporte para este servicio (Punto 4)
+    const generarReporte = (id: number) => {
+        router.push({ name: 'reports-new', query: { tipo: 'Servicio Programado', id: id } })
+    }
+
+    const getReportForService = (serviceId: number) => {
+        return reportes.value.find(r => r.tipoReporte === 'Servicio Programado' && (r.origenDatosId === serviceId || r.origen_datos_id === serviceId))
+    }
+
+    const editarReporteService = (service: Service) => {
+        const report = getReportForService(service.id)
+        if (report) {
+            router.push({ name: 'report-edit', params: { id: report.idReporte || report.id } })
+        } else {
+            generarReporte(service.id)
+        }
     }
 
     // Status coloring
@@ -113,7 +141,7 @@ import client from '../../../api/client'
 
     const getDueDateWarning = (fechaVencimiento: string) => {
     // Current date for comparison
-    const today = new Date()
+    const today = new Date('2026-02-19') 
     const due = new Date(fechaVencimiento)
     const diffTime = due.getTime() - today.getTime()
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
@@ -245,8 +273,30 @@ import client from '../../../api/client'
                         </td>
 
                         <!-- Align text (middle) -->
-                        <td class="align-middle text-right">
-                            <ChevronRight :size="20" class="chevron-icon" />
+                        <td class="align-middle text-right pr-6">
+                            <div class="flex items-center justify-end gap-2">
+                                <button
+                                    v-if="service.estatus === 'Realizado' || getReportForService(service.id)"
+                                    type="button"
+                                    class="btn-table-edit-report"
+                                    @click.stop="editarReporteService(service)"
+                                    title="Editar reporte técnico asociado"
+                                >
+                                    <FileEdit :size="14" />
+                                    <span>Editar Reporte</span>
+                                </button>
+                                <button
+                                    v-else
+                                    type="button"
+                                    class="btn-table-report"
+                                    @click.stop="generarReporte(service.id)"
+                                    title="Generar reporte técnico para este servicio"
+                                >
+                                    <FileText :size="14" />
+                                    <span>Reportar</span>
+                                </button>
+                                <ChevronRight :size="20" class="chevron-icon" />
+                            </div>
                         </td>
 
                     </tr>
@@ -288,6 +338,49 @@ import client from '../../../api/client'
         &.programado { background: #dcfce7; color: #15803d; } /* Green */   
         &.en-proceso { background: #e0f2fe; color: #0369a1; }  /* Blue */   
         &.vencido { background: #fee2e2; color: #b91c1c; }    /* Red */  
+    }
+
+    .btn-table-report {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: #eff6ff;
+        color: #2563eb;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+
+        &:hover {
+            background: #2563eb;
+            color: #ffffff;
+            border-color: #2563eb;
+        }
+    }
+
+    .btn-table-edit-report {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: #ecfdf5;
+        color: #059669;
+        border: 1px solid #a7f3d0;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap;
+
+        &:hover {
+            background: #059669;
+            color: #ffffff;
+            border-color: #059669;
+        }
     }
 
     .align-middle {

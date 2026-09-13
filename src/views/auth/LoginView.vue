@@ -2,48 +2,27 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
-import { useToast } from 'vue-toastification'
-import loginImageUrl from '../../assets/login-image.png'
 
 const router = useRouter()
-const auth = useAuthStore()
-const toast = useToast()
+const authStore = useAuthStore()
 
-const email = ref('')
-const password = ref('')
+const email = ref('admin@empresa.com')
+const password = ref('password')
 const rememberMe = ref(false)
 const isLoading = ref(false)
-const errorMsg = ref('')
+const errorMessage = ref('')
 
 const handleLogin = async () => {
+  errorMessage.value = ''
   isLoading.value = true
-  errorMsg.value = ''
-  try {
-    await auth.login(email.value, password.value)
-    toast.success('Bienvenido')
-    // Navegación completa para arrancar la SPA limpia: el worker re-evalúa
-    // con la cookie jwt ya seteada y no quedan requests en vuelo que puedan
-    // disparar un 401->auth:expirado y revertir el redirect.
-    const redirect = router.currentRoute.value.query.redirect as string | undefined
-    const dest = redirect && redirect.startsWith('/') && !redirect.startsWith('/login') ? redirect : '/app/dashboard'
-    router.push(dest)
-  } catch (e: any) {
-    const status = e?.response?.status
-    if (status === 419) {
-      errorMsg.value = 'Sesión expirada. Recarga la página (F5) e intenta de nuevo. Si persiste, limpia cookies del sitio.'
-    } else if (status === 422 || status === 401) {
-      errorMsg.value = e?.response?.data?.errors?.email?.[0] || e?.response?.data?.message || 'Credenciales incorrectas. Verifica tu correo y contraseña.'
-    } else if (status === 403) {
-      errorMsg.value = e?.response?.data?.message || 'Usuario desactivado. Contacta al administrador.'
-    } else {
-      errorMsg.value = e?.response?.data?.message || 'Error de conexión. Verifica que la API esté en http://localhost:8000'
-    }
-    if (errorMsg.value.includes('CSRF token mismatch')) {
-      errorMsg.value = 'Sesión expirada (CSRF). Recarga la página e intenta de nuevo.'
-    }
-    toast.error(errorMsg.value)
-  } finally {
-    isLoading.value = false
+  
+  const result = await authStore.login(email.value, password.value)
+  isLoading.value = false
+
+  if (result.success) {
+    router.push({ name: 'dashboard' })
+  } else {
+    errorMessage.value = result.message
   }
 }
 </script>
@@ -65,20 +44,26 @@ const handleLogin = async () => {
             <h2>Bienvenido de vuelta!</h2>
             <p class="subtitle">Ingrese sus datos para continuar.</p>
         </div>
+
+        <!-- Banner de error si las credenciales fallan o el server no responde -->
+        <div v-if="errorMessage" class="error-banner">
+            {{ errorMessage }}
+        </div>
+
             <!------------ Formulario ------------>
         <form @submit.prevent="handleLogin">
             <div class="form-group">
-                <label>Correo electrónico</label>
+                <label>Email address</label>
                 <input 
                 v-model="email" 
                 type="email" 
-                placeholder="correo@ejemplo.com" 
+                placeholder="admin@empresa.com" 
                 required 
                 />
             </div>
 
             <div class="form-group">
-                <label>Contraseña</label>
+                <label>Password</label>
                 <input 
                 v-model="password" 
                 type="password" 
@@ -90,14 +75,13 @@ const handleLogin = async () => {
             <div class="form-actions">
                 <label class="checkbox-label">
                 <input type="checkbox" v-model="rememberMe">
-                <span>Recordarme</span>
+                <span>Remember me</span>
                 </label>
-                <a href="#" class="forgot-link">¿Olvidaste tu contraseña?</a>
+                <a href="#" class="forgot-link">Forgot password?</a>
             </div>
 
-            <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
             <button type="submit" :disabled="isLoading" class="btn-primary">
-                {{ isLoading ? 'Ingresando...' : 'Ingresar' }}
+                {{ isLoading ? 'Conectando con el servidor...' : 'Iniciar Sesión' }}
             </button>
         </form>
 
@@ -110,7 +94,7 @@ const handleLogin = async () => {
 
     <!-- Panel derecho -->
     <div class="right-pane">
-        <img :src="loginImageUrl" alt="Login Visual" class="login-image" />
+        <img src = "/src/assets/login-image.png" alt = "Login Visual" class = "login-image" />
     </div>
 
     </div>
@@ -274,10 +258,22 @@ input:focus {
     font-size: 0.9rem;
 }
 
+.error-banner {
+    background-color: #fef2f2;
+    border: 1px solid #f87171;
+    color: #b91c1c;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1.25rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+}
+
+
 .signup-text a {
     color: #1e3a8a;
     font-weight: 600;
     text-decoration: none;
 }
-.error-msg { color:#dc2626; background:#fee2e2; padding:0.6rem; border-radius:6px; margin-bottom:1rem; font-size:0.9rem; }
 </style>

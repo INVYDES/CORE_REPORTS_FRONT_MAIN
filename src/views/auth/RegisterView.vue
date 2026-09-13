@@ -1,106 +1,89 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import client from '../../api/client'
-import { useToast } from 'vue-toastification'
 
 const router = useRouter()
-const toast = useToast()
 const isLoading = ref(false)
 
+// Constantes "Régimen fiscal"
 const fiscalRegimes = [
     { code: '601', label: '601 - General de Ley Personas Morales' },
+    { code: '602', label: '602 - Simplificado de Ley Personas Morales' },
+    { code: '604', label: '604 - Pequeños Contribuyentes' },
+    { code: '608', label: '608 - Demás Ingresos' },
+    { code: '609', label: '609 - Consolidación' },
+    { code: '610', label: '610 - Residentes Extranjero sin Establecimiento' },
+    { code: '612', label: '612 - Personas Físicas Actividades Empresariales' },
+    { code: '614', label: '614 - Ingresos por Intereses' },
+    { code: '616', label: '616 - Sin Obligaciones Fiscales' },
+    { code: '618', label: '618 - Simplificado Personas Físicas' },
+    { code: '620', label: '620 - Cooperativas que Difieren Ingresos' },
+    { code: '621', label: '621 - Incorporación Fiscal' },
+    { code: '623', label: '623 - Opcional para Grupos de Sociedades' },
+    { code: '625', label: '625 - Actividades en Plataformas Tecnológicas' },
     { code: '626', label: '626 - Simplificado de Confianza' }
 ]
+
+// Constantes "Uso de CFDI"
 const cfdiUses = [
     { code: 'G01', label: 'G01 - Adquisición de mercancías' },
     { code: 'G03', label: 'G03 - Gastos en general' },
+    { code: 'P01', label: 'P01 - Público en general' }
 ]
+
+// Constantes "Planes"
 const plans = [
     { id: 'free', label: 'Prueba gratuita (10 pedidos/día por 7 días)' },
     { id: 'monthly', label: 'Mensual - $399.00 IVA Incluido' },
     { id: 'annual', label: 'Anual - $3830.40 (20% descuento)' }
 ]
+
+// Datos "reactivos" de la compañia (Uso en formulario)
 const formData = reactive({
-    companyName: '', rfc: '', fiscalRegime: '', cfdiUse: '',
-    username: '', firstName: '', lastNamePaternal: '', lastNameMaternal: '', email: '', password: '',
-    street: '', colony: '', zipCode: '', city: '', state: '', municipality: '', phone: '',
-    planType: '', paymentMethod: '', paymentForm: '', invoiceRequired: false
+
+    // Company
+    companyName: '',
+    rfc: '',
+    fiscalRegime: '',
+    cfdiUse: '',
+  
+    // Personal
+    username: '',
+    firstName: '',
+    lastNamePaternal: '',
+    lastNameMaternal: '',
+    email: '',
+    password: '',
+  
+    // Address
+    street: '',
+    colony: '',
+    zipCode: '',
+    city: '',
+    state: '',
+    municipality: '',
+    phone: '',
+  
+    // Additional
+    planType: '', // Maps to "Tipo de Licencia"
+    paymentMethod: '', // "Método de Pago Preferido"
+    paymentForm: '',   // "Forma de Pago"
+    invoiceRequired: false // "Requerimiento de factura"
 })
-const showLicencias = ref(false)
-const licencias = ref<any[]>([])
-const selectedLicencia = ref<number | null>(null)
 
-const handleRegister = async () => {
+const handleRegister = () => {
     isLoading.value = true
-    try {
-        const { data } = await client.post('/public/register-compania', {
-            companyName: formData.companyName,
-            rfc: formData.rfc,
-            fiscalRegime: formData.fiscalRegime,
-            cfdiUse: formData.cfdiUse,
-            email: formData.email,
-            password: formData.password,
-            firstName: formData.firstName,
-            lastNamePaternal: formData.lastNamePaternal,
-            lastNameMaternal: formData.lastNameMaternal,
-            phone: formData.phone,
-            planType: formData.planType,
-        })
-        // Guardar token y loguear automáticamente
-        if (data.token && data.user) {
-            localStorage.setItem('token', data.token)
-            localStorage.setItem('user', JSON.stringify(data.user))
-            // @ts-ignore
-            const { useAuthStore } = await import('../../stores/authStore')
-            const auth = useAuthStore()
-            // @ts-ignore
-            auth.token = data.token
-            // @ts-ignore
-            auth.currentUser = data.user
-        }
-        // Si eligió trial o no eligió plan, ir directo al dashboard
-        if (!formData.planType || formData.planType === 'free' || formData.planType === 'trial') {
-            toast.success('Cuenta creada con plan Trial. ¡Bienvenido!')
-            router.push({ name: 'dashboard' })
-            return
-        }
-        // Para planes de pago, mostrar selector de licencias con Mercado Pago
-        toast.success('Cuenta creada. Selecciona tu licencia para continuar.')
-        // Cargar licencias disponibles
-        try {
-            const res = await client.get('/licencias/disponibles')
-            licencias.value = res.data.data || res.data || []
-        } catch {
-            // Fallback hardcode si no hay endpoint
-            licencias.value = [
-                { id: 2, nombre: 'Mensual', tipo: 'mensual', precio: 399, descripcion: 'Plan mensual' },
-                { id: 3, nombre: 'Anual', tipo: 'anual', precio: 3830.40, descripcion: 'Plan anual 20% descuento' },
-            ]
-        }
-        showLicencias.value = true
-    } catch(e:any){ toast.error(e?.response?.data?.message || JSON.stringify(e?.response?.data?.errors) || 'Error al registrar') } finally { isLoading.value=false }
-}
-
-const pagarConMercadoPago = async () => {
-    if (!selectedLicencia.value) {
-        toast.error('Selecciona una licencia')
-        return
-    }
-    isLoading.value = true
-    try {
-        const res = await client.post(`/licencias/${selectedLicencia.value}/comprar-mercadopago`)
-        const initPoint = res.data.init_point || res.data.initPoint
-        if (initPoint) {
-            toast.success('Redirigiendo a Mercado Pago...')
-            window.location.href = initPoint
-        } else {
-            toast.success('Licencia activada')
-            router.push({ name: 'dashboard' })
-        }
-    } catch(e:any){ toast.error(e?.response?.data?.message || 'Error al crear preferencia de pago') } finally { isLoading.value=false }
+    console.log("Registrando datos:", formData)
+  
+    // Simulación (QUITAR ESTOOOOOOOOOOOO!!!!, bueno, cambiar xd) -----------------------------------------------------------
+    setTimeout(() => {
+        isLoading.value = false
+        router.push({ name: 'login' }) 
+    }, 2000)
 }
 </script>
+
+<!------------------------------------------------------------------------------------------------------------------>
 
 <template>
     <div class="split-screen-register">
@@ -391,32 +374,8 @@ const pagarConMercadoPago = async () => {
 
                     </div>
 
-                    <!-- SECCIÓN 5 - SELECCIÓN DE LICENCIA (aparece después de registro) -->
-                    <div v-if="showLicencias" class="form-section" style="border:2px solid #3b82f6; background:#eff6ff; border-radius:8px; padding:1.5rem;">
-                        <h3><span class="step-num" style="background:#10b981">5</span> Selecciona tu licencia</h3>
-                        <p class="subtitle" style="margin-bottom:1rem; color:#475569">Tu cuenta ya fue creada. Elige un plan para activar tu licencia y serás redirigido a Mercado Pago.</p>
-                        <div v-for="lic in licencias" :key="lic.id" @click="selectedLicencia = lic.id"
-                             :style="{border: selectedLicencia===lic.id ? '2px solid #3b82f6' : '1px solid #cbd5e1', background: selectedLicencia===lic.id ? '#dbeafe' : 'white', borderRadius:'8px', padding:'1rem', marginBottom:'0.75rem', cursor:'pointer'}">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <div>
-                                    <strong>{{ lic.nombre }}</strong> <span style="background:#e0e7ff; padding:2px 6px; border-radius:4px; font-size:0.75rem;">{{ lic.tipo }}</span>
-                                    <div style="font-size:0.85rem; color:#475569; margin-top:0.25rem;">{{ lic.descripcion }}</div>
-                                    <div style="font-size:0.8rem; color:#64748b;">{{ lic.max_usuarios }} usuarios • {{ lic.max_reportes_mensuales }} reportes/mes</div>
-                                </div>
-                                <div style="text-align:right;">
-                                    <div style="font-weight:700; color:#1e3a8a;">${{ lic.precio }} MXN</div>
-                                    <div v-if="lic.precio_anual" style="font-size:0.75rem; color:#64748b;">Anual ${{ lic.precio_anual }}</div>
-                                </div>
-                            </div>
-                        </div>
-                        <button type="button" @click="pagarConMercadoPago" :disabled="isLoading || !selectedLicencia" class="btn-primary" style="margin-top:1rem; background:#009ee3;">
-                            {{ isLoading ? 'Creando preferencia...' : 'Pagar con Mercado Pago' }}
-                        </button>
-                        <button type="button" @click="router.push({ name: 'dashboard' })" style="width:100%; margin-top:0.5rem; background:transparent; border:1px solid #cbd5e1; padding:0.6rem; border-radius:6px; cursor:pointer; color:#475569;">Continuar con Trial gratis</button>
-                    </div>
-
                     <!-- SECCIÓN 5 - BOTÓN "ENVIAR"-->
-                    <div v-if="!showLicencias" class="form-actions">
+                    <div class="form-actions">
                         <button type="submit" :disabled="isLoading" class="btn-primary">
                             {{ isLoading ? 'Registrando...' : 'Crear cuenta' }}
                         </button>
@@ -443,6 +402,8 @@ const pagarConMercadoPago = async () => {
 
     </div>
 </template>
+
+<!------------------------------------------------------------------------------------------------------------------>
 
 <style scoped lang="scss">
 @use "sass:color";

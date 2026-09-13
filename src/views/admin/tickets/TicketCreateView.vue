@@ -1,85 +1,84 @@
 <script setup lang="ts">
     import { ref } from 'vue'
     import { useRouter } from 'vue-router'
-    import { Camera, X, ArrowLeft } from 'lucide-vue-next'
-    const props = defineProps<{ isModal?: boolean }>()
-    const emit = defineEmits<{ (e: 'close'): void; (e: 'created'): void }>()
-    import { ticketsApi } from '../../../api/tickets'
-    import { useToast } from 'vue-toastification'
+    import { Camera, X } from 'lucide-vue-next'
     import { useAuthStore } from '../../../stores/authStore'
+    import { apiFetch } from '../../../api/apiClient'
 
     const router = useRouter()
-    const toast = useToast()
-    const auth = useAuthStore()
+    const authStore = useAuthStore()
+    const user = authStore.currentUser
 
-    const isSubmitting = ref(false)
+    // The Form Data State
     const formData = ref({
-        dependencia: '',
-        solicitante: auth.currentUser?.nombre ? `${auth.currentUser.nombre} ${auth.currentUser.apellidos}` : '',
-        cargo: '',
+        dependencia: user?.empresa?.nombre || 'Empresa de Prueba S.A. de C.V.',
+        solicitante: user ? `${user.nombre} ${user.apellidos}` : 'Administrador',
+        cargo: 'Administrador de Plataforma',
         asunto: '',
         prioridad: 'Media',
         descripcion: ''
     })
 
+    const isSubmitting = ref(false)
+    const errorMessage = ref('')
+
+    // Photo Handling State
     const photoPreview = ref<string | null>(null)
-    const photoFile = ref<File | null>(null)
     const fileInput = ref<HTMLInputElement | null>(null)
 
+    // "Fake" Upload Logic
     const handlePhotoSelect = (event: Event) => {
         const target = event.target as HTMLInputElement
         if (target.files && target.files[0]) {
             const file = target.files[0]
-            photoFile.value = file
             photoPreview.value = URL.createObjectURL(file)
         }
     }
 
+    // Reset hidden input
     const clearPhoto = () => {
         photoPreview.value = null
-        photoFile.value = null
-        if (fileInput.value) fileInput.value.value = ''
+        if (fileInput.value) {
+            fileInput.value.value = ''
+        }
     }
 
-    const handleBack = () => {
-        if (props.isModal) emit('close')
-        else if (window.history.length > 1) router.back()
-        else router.push({ name: 'tickets' })
-    }
-
+    // Submit Logic real con Laravel API
     const submitTicket = async () => {
-        if (isSubmitting.value) return
         isSubmitting.value = true
+        errorMessage.value = ''
         try {
-            const payload: any = {
-                asunto: formData.value.asunto,
-                descripcion: formData.value.descripcion,
-                solicitante: formData.value.solicitante,
-                cargo: formData.value.cargo,
-                prioridad: formData.value.prioridad,
-            }
-            const res = await ticketsApi.create(payload)
-            toast.success(`Ticket ${res.folio} creado`)
-            if (props.isModal) { emit('created'); emit('close') } else router.push({ name: 'tickets' })
-        } catch (e:any) {
-            const msg = e?.response?.data?.message || JSON.stringify(e?.response?.data?.errors) || 'Error al crear ticket'
-            toast.error(msg)
-        } finally { isSubmitting.value = false }
+            const res = await apiFetch('/tickets', {
+                method: 'POST',
+                body: JSON.stringify({
+                    asunto: formData.value.asunto,
+                    descripcion: formData.value.descripcion,
+                    prioridad: formData.value.prioridad,
+                    solicitante: formData.value.solicitante,
+                    cargo: formData.value.cargo
+                })
+            })
+
+            const folioCreado = res.data?.folio || 'TCK-NUEVO'
+            alert(`¡Ticket ${folioCreado} creado exitosamente en MySQL!`)
+            router.push({ name: 'dashboard' })
+        } catch (error: any) {
+            console.error('Error al crear ticket:', error)
+            errorMessage.value = error.message || 'Error al guardar el ticket en el servidor.'
+            alert(`Error: ${errorMessage.value}`)
+        } finally {
+            isSubmitting.value = false
+        }
     }
-
-
 </script>
 <!-------------------------------------------------------------------------------------------------->
 <template>
     <div class="page-container-ticket-create">
         
         <!-- Header-->
-        <header class="form-header" style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
-            <div>
-                <h1>Nuevo Ticket de Soporte</h1>
-                <p class="subtitle">Complete los detalles para registrar la incidencia.</p>
-            </div>
-            <button v-if="isModal" @click="emit('close')" class="btn-close" title="Cerrar" style="width:36px;height:36px;border-radius:50%;background:#f1f5f9;border:1px solid #e2e8f0;font-size:20px;cursor:pointer;flex-shrink:0;">×</button>
+        <header class="form-header">
+            <h1>Nuevo Ticket de Soporte</h1>
+            <p class="subtitle">Complete los detalles para registrar la incidencia.</p>
         </header>
 
         <div class="card form-card">
@@ -241,13 +240,11 @@
 
                 <div class="divider"></div>
 
-                <!-- Actions -->
+                <!-- Send button-->
                 <div class="form-actions">
-                    <button type="button" @click="handleBack" class="btn-cancelar">
-                        <ArrowLeft :size="18" style="margin-right:8px" />
-                        Regresar
+                    <button type="submit" :disabled="isSubmitting" class="btn-enviar">
+                        {{ isSubmitting ? 'Guardando en MySQL...' : 'Crear Ticket' }}
                     </button>
-                    <button type="submit" class="btn-enviar" :disabled="isSubmitting">{{ isSubmitting ? 'Creando...' : 'Crear Ticket' }}</button>
                 </div>
 
             </form>
@@ -477,33 +474,16 @@
     font-size: 1rem;
     cursor: pointer;
     transition: background 0.2s;
-    width: 100%;
+    width: 100%; /* Full width on mobile */
 
     &:hover { background: #1d4ed8; }
-    &:disabled { background: #93c5fd; cursor: not-allowed; }
-}
-
-.btn-cancelar {
-    background: white;
-    color: #64748b;
-    border: 1px solid #cbd5e1;
-    min-height: 48px;
-    padding: 0 1.5rem;
-    border-radius: 8px;
-    font-weight: 600;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    width: 100%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-
-    &:hover { background: #f8fafc; color: #0f172a; }
 }
 
 @media (min-width: 768px) {
     .btn-enviar { width: auto; }
+}
+
+@media (min-width: 768px) {
     .btn-cancelar { width: auto; }
 }
 </style>

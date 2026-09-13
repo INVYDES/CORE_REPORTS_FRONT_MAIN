@@ -1,13 +1,9 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../../stores/authStore'
 import { storeToRefs } from 'pinia'
-import { getDependenciaName } from '../../../data/mockDependencias'
-import type { Subdependencia } from '../../../data/mockDependencias'
-import { areasApi } from '../../../api/areas'
-import { useToast } from 'vue-toastification'
+import { apiFetch } from '../../../api/apiClient'
 import { 
     Network, 
     Trash2, 
@@ -19,53 +15,48 @@ const router = useRouter()
 const authStore = useAuthStore()
 const { currentUser } = storeToRefs(authStore)
 
-if (!currentUser.value || (currentUser.value?.rol !== 1 && currentUser.value?.rol !== 2)) {
+// Security & Access Control: Only Tech Admin (1) and Commercial Admin (2)
+if (!currentUser.value || (currentUser.value.rol !== 1 && currentUser.value.rol !== 2)) {
     router.push({ name: 'dashboard' })
 }
 
-const companyId = computed(() => (currentUser.value as any)?.idDependencia ?? (currentUser.value as any)?.dependencia_id ?? 0)
-const companyName = computed(() => getDependenciaName(companyId.value))
+// Data Integration
+const companyName = computed(() => currentUser.value?.empresa?.nombre || 'Mi Empresa')
 
-const toast = useToast()
-const localSubareas = ref<Subdependencia[]>([])
-const loading = ref(false)
+// Local reactive array for subdependencies
+const localSubareas = ref<any[]>([])
+const isLoading = ref(true)
 
-const fetchAreas = async () => {
-    loading.value = true
+const fetchSubareas = async () => {
+    isLoading.value = true
     try {
-        const res = await areasApi.list()
-        const list = res.data || res
-        const arr = Array.isArray(list) ? list : []
-        localSubareas.value = arr.map((a:any)=> ({
-            idSubdependencia: a.id,
-            idDependencia: a.dependencia_id,
-            codigo: a.codigo,
-            nombre: a.nombre,
-            descripcion: a.descripcion,
-            activo: a.activa ?? true
-        }))
-    } catch (e:any) {
-        toast.error(e?.response?.data?.message || 'No se pudieron cargar áreas desde el back')
-    } finally { loading.value = false }
+        const res = await apiFetch('/subdependencias')
+        if (res.data) {
+            localSubareas.value = res.data
+        }
+    } catch (err) {
+        console.error('Error al cargar subáreas:', err)
+    } finally {
+        isLoading.value = false
+    }
 }
 
-onMounted(fetchAreas)
+onMounted(() => {
+    fetchSubareas()
+})
 
+// UI State
 const isModalOpen = ref(false)
 const isEditing = ref(false)
 const form = ref({
     idSubdependencia: 0,
-    codigo: '',
-    nombre: '',
-    descripcion: ''
+    nombre: ''
 })
 
 const openModalForAdd = () => {
     form.value = {
         idSubdependencia: 0,
-        codigo: '',
-        nombre: '',
-        descripcion: ''
+        nombre: ''
     }
     isEditing.value = false
     isModalOpen.value = true
@@ -74,75 +65,65 @@ const openModalForAdd = () => {
 const openModalForEdit = (subarea: any) => {
     form.value = {
         idSubdependencia: subarea.idSubdependencia,
-        codigo: subarea.codigo || '',
-        nombre: subarea.nombre,
-        descripcion: subarea.descripcion || ''
+        nombre: subarea.nombre
     }
     isEditing.value = true
     isModalOpen.value = true
 }
 
 const deleteSubarea = async (idSubdependencia: number) => {
-    if (!confirm('¿Estás seguro de que deseas eliminar esta subárea?')) return
-    try {
-        await areasApi.remove(idSubdependencia)
-        localSubareas.value = localSubareas.value.filter(s => s.idSubdependencia !== idSubdependencia)
-        toast.success('Área eliminada')
-    } catch (e:any) {
-        toast.error(e?.response?.data?.message || 'Error al eliminar')
+    if (confirm('¿Estás seguro de que deseas eliminar esta subárea?')) {
+        try {
+            await apiFetch(`/subdependencias/${idSubdependencia}`, {
+                method: 'DELETE'
+            })
+            localSubareas.value = localSubareas.value.filter(s => s.idSubdependencia !== idSubdependencia)
+            alert('Subárea eliminada exitosamente.')
+        } catch (err: any) {
+            alert('Error al eliminar subárea: ' + (err.message || 'Error desconocido'))
+        }
     }
 }
 
-const handleDeleteFromModal = async () => {
-    await deleteSubarea(form.value.idSubdependencia);
-    isModalOpen.value = false;
+const handleDeleteFromModal = () => {
+    deleteSubarea(form.value.idSubdependencia)
+    isModalOpen.value = false
 }
-
 
 const saveSubarea = async () => {
-    if(!form.value.nombre.trim()) {
-        toast.error("El nombre no puede estar vacío.")
+    if (!form.value.nombre.trim()) {
+        alert("El nombre no puede estar vacío.")
         return
     }
-    if(!form.value.codigo.trim()) {
-        toast.error("El código no puede estar vacío.")
-        return
-    }
+
     try {
-        const payload = {
-            codigo: form.value.codigo.trim().toUpperCase().replace(/\s+/g,'_'),
-            nombre: form.value.nombre.trim(),
-            descripcion: form.value.descripcion.trim() || null
-        }
         if (isEditing.value) {
-            const updated = await areasApi.update(form.value.idSubdependencia, payload)
-            const idx = localSubareas.value.findIndex(s => s.idSubdependencia === form.value.idSubdependencia)
-            if (idx !== -1) localSubareas.value[idx] = { 
-                ...localSubareas.value[idx], 
-                codigo: updated.codigo || payload.codigo,
-                nombre: updated.nombre || payload.nombre,
-                descripcion: updated.descripcion || payload.descripcion
-            }
-            toast.success('Área actualizada')
-        } else {
-            const created = await areasApi.create(payload)
-            localSubareas.value.push({
-                idSubdependencia: created.id,
-                idDependencia: created.dependencia_id,
-                codigo: created.codigo,
-                nombre: created.nombre,
-                descripcion: created.descripcion,
-                activo: true
+            const res = await apiFetch(`/subdependencias/${form.value.idSubdependencia}`, {
+                method: 'PUT',
+                body: JSON.stringify({ nombre: form.value.nombre })
             })
-            toast.success('Área creada')
+            if (res.data) {
+                const index = localSubareas.value.findIndex(s => s.idSubdependencia === form.value.idSubdependencia)
+                if (index !== -1) {
+                    localSubareas.value[index] = res.data
+                }
+                alert('Subárea actualizada con éxito.')
+            }
+        } else {
+            const res = await apiFetch('/subdependencias', {
+                method: 'POST',
+                body: JSON.stringify({ nombre: form.value.nombre })
+            })
+            if (res.data) {
+                localSubareas.value.push(res.data)
+                alert('Subárea creada con éxito en MySQL.')
+            }
         }
         isModalOpen.value = false
-    } catch (e:any) {
-        const msg = e?.response?.data?.message || JSON.stringify(e?.response?.data?.errors) || 'Error al guardar'
-        toast.error(msg)
+    } catch (err: any) {
+        alert('Error al guardar subárea: ' + (err.message || 'Error del servidor'))
     }
 }
-
 </script>
 
 <template>

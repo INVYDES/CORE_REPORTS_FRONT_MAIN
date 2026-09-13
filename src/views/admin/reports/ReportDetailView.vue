@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// @ts-nocheck
-    import { ref, onMounted, reactive, computed } from 'vue'
+    import { ref, computed, onMounted } from 'vue'
     import { useRoute, useRouter } from 'vue-router'
     import { ArrowLeft, User, Calendar, Clock, CheckCircle2, FileText, Wrench, Building2 } from 'lucide-vue-next'
+    import { useToast } from 'vue-toastification'
     
-    // Import Data
-import client from '../../../api/client'
+    import type { Reporte } from '../../../data/mockReportes'
+    import { getSubdependenciaName } from '../../../data/mockDependencias'
+    import { apiFetch } from '../../../api/apiClient'
     
     // Pinia store
     import { useAuthStore } from '../../../stores/authStore'
@@ -17,8 +18,8 @@ import client from '../../../api/client'
     const route = useRoute()
     const router = useRouter()
 
-    // Role-based access: only tech roles (1: Admin Técnico, 3: Técnico) can view reports
-    if (!currentUser.value || (currentUser.value?.rol !== 1 && currentUser.value?.rol !== 3)) {
+    // Role-based access: tech roles (1: Admin Técnico, 3: Técnico) and commercial admin (2) can view reports
+    if (!currentUser.value || (currentUser.value.rol !== 1 && currentUser.value.rol !== 2 && currentUser.value.rol !== 3)) {
         router.push({ name: 'dashboard' })
     }
 
@@ -27,78 +28,60 @@ import client from '../../../api/client'
     }
 
     const reportId = Number(route.params.id)
-    const report = ref<any>(null)
+    const report = ref<Reporte | null>(null)
+    const isLoading = ref(true)
     const users = ref<any[]>([])
-    const areas = ref<any[]>([])
+    const tickets = ref<any[]>([])
+    const services = ref<any[]>([])
+    const subareas = ref<any[]>([])
 
-    const tipoLabel = (code: string) => ({ ticket: 'Ticket', servicio: 'Servicio Programado', libre: 'Libre' } as any)[code] || code
-    const catLabel = (code: string) => ({ preventivo: 'Mantenimiento Preventivo', correctivo: 'Mantenimiento Correctivo', instalacion: 'Instalación', mejora: 'Mejora', diagnostico: 'Diagnóstico' } as any)[code] || code
-    const estatusLabel = (code: string) => ({ finalizado: 'Cerrado / Trabajo Finalizado', abierto: 'Abierto / Trabajo Parcial', parcial: 'Abierto / Trabajo Parcial', descartado: 'Descartado / Cancelado' } as any)[code] || code
+    const fetchReportDetail = async () => {
+        isLoading.value = true
+        try {
+            const [repRes, uRes, tRes, sRes, subRes] = await Promise.all([
+                apiFetch(`/reportes/${reportId}`),
+                apiFetch('/usuarios').catch(() => ({ data: [] })),
+                apiFetch('/tickets').catch(() => ({ data: [] })),
+                apiFetch('/servicios').catch(() => ({ data: [] })),
+                apiFetch('/subdependencias').catch(() => ({ data: [] }))
+            ])
 
-    const applyReport = (raw: any) => {
-        const dep = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-        if (raw.dependencia_id !== undefined && dep !== undefined && raw.dependencia_id !== dep) {
+            if (repRes.data) {
+                report.value = repRes.data
+            }
+            if (uRes.data) users.value = uRes.data
+            if (tRes.data) tickets.value = tRes.data
+            if (sRes.data) services.value = sRes.data
+            if (subRes.data) subareas.value = subRes.data
+        } catch (error) {
+            console.error('Error al cargar reporte:', error)
             report.value = null
-            return
-        }
-        const origen = raw.ticket || raw.servicio || null
-        report.value = {
-            idReporte: raw.id,
-            folio: raw.folio,
-            idDependencia: raw.dependencia_id,
-            idSubdependencia: raw.area_id ?? undefined,
-            creadoPor: raw.creado_por,
-            tipoReporte: tipoLabel(raw.tipo),
-            origenDatosId: raw.ticket_id ?? raw.servicio_id ?? null,
-            categoria: catLabel(raw.categoria),
-            fechaElaboracion: raw.fecha_inicio,
-            fechaHoraInicio: raw.fecha_inicio,
-            fechaHoraFin: raw.fecha_fin,
-            horaSalidaBase: raw.hora_salida,
-            horaLlegadaSitio: raw.hora_llegada,
-            horaRegresoABase: raw.hora_regreso,
-            fallaReportada: origen?.descripcion || undefined,
-            desarrolloActividades: raw.desarrollo || '',
-            conclusionTrabajo: undefined,
-            esRetrabajo: !!raw.es_retrabajo,
-            responsableId: raw.responsable_id,
-            ejecutoresIds: (raw.ejecutores || []).map((e: any) => e.usuario_id),
-            materiales: (raw.materiales || []).map((m: any) => ({
-                idItem: m.id,
-                material: m.material?.nombre || 'Material',
-                cantidad: Number(m.cantidad) || 1,
-                unidad: m.material?.unidad_base || 'pza',
-            })),
-            evidenciaFotografica: (raw.evidencias || []).map((ev: any) => ({ url: ev.url || ev.ruta_archivo || ev.path || '', comentario: ev.comentario || ev.descripcion || '' })).filter((ev: any) => ev.url),
-            historialModificaciones: [],
-            estatusReporte: estatusLabel(raw.estatus),
+        } finally {
+            isLoading.value = false
         }
     }
 
-    const loadReport = async () => {
-        try {
-            const res = await client.get(`/reportes/${reportId}`).then(r => r.data)
-            applyReport(res.data || res)
-        } catch {
-            report.value = null
-        }
-        try {
-            const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            if (Array.isArray(list)) users.value = list
-        } catch {}
-        try {
-            const res = await client.get('/areas', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res || []
-            if (Array.isArray(list)) areas.value = list
-        } catch {}
-    }
-    onMounted(loadReport)
+    onMounted(() => {
+        fetchReportDetail()
+    })
+
+    const canEditReport = computed(() => {
+        if (!currentUser.value) return false
+        // Admin Técnico (1) y Admin Comercial (2) pueden editar cualquier reporte
+        if (currentUser.value.rol === 1 || currentUser.value.rol === 2) return true
+        // Técnico (3) puede editar si es el creador o uno de los ejecutores asignados
+        if (!report.value) return false
+        const myId = currentUser.value.idUsuario
+        const isCreator = (report.value.creadoPor === myId) || ((report.value as any).creado_por === myId)
+        const isExecutor = (report.value.ejecutoresIds && report.value.ejecutoresIds.includes(myId)) ||
+                           ((report.value as any).ejecutores && (report.value as any).ejecutores.some((e: any) => e.idUsuario === myId || e.id_usuario === myId))
+        return isCreator || isExecutor
+    })
 
     const getUserName = (id: number | null) => {
         if (!id) return 'Sin Asignar'
-        const user = users.value.find((u: any) => u.id === id)
-        return user ? `${user.nombre} ${user.apellidos}`.trim() : 'Usuario Desconocido'
+        const user = users.value.find(u => u.idUsuario === id || u.id === id)
+        return user ? `${user.nombre} ${user.apellidos}` : 'Usuario Desconocido'
     }
 
     const getEjecutoresNames = (ids: number[]) => {
@@ -108,7 +91,13 @@ import client from '../../../api/client'
 
     const formatDate = (dateString: string) => {
         if (!dateString) return '---'
-        const date = new Date(dateString)
+        const trimmed = String(dateString).trim()
+        if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(trimmed)) {
+            return trimmed.slice(0, 5) + ' hrs'
+        }
+        const str = trimmed.replace(' ', 'T')
+        const date = new Date(str)
+        if (isNaN(date.getTime())) return dateString
         return date.toLocaleDateString('es-MX', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     }
 
@@ -117,94 +106,20 @@ import client from '../../../api/client'
         if (report.value.tipoReporte === 'Libre' || !report.value.origenDatosId) {
             return { folio: 'Reporte Libre', asunto: report.value.fallaReportada || 'Independiente' }
         }
-        const prefix = report.value.tipoReporte === 'Ticket' ? 'Ticket' : 'Servicio'
-        return { folio: `${prefix}: ${report.value.folio}`, asunto: report.value.fallaReportada || '' }
+        if (report.value.tipoReporte === 'Ticket') {
+            const ticket = tickets.value.find(t => t.id === report.value?.origenDatosId)
+            return ticket ? { folio: `Ticket: ${ticket.folio}`, asunto: ticket.asunto } : { folio: `Ticket #${report.value.origenDatosId}`, asunto: 'Ticket' }
+        }
+        if (report.value.tipoReporte === 'Servicio Programado') {
+            const service = services.value.find(s => s.id === report.value?.origenDatosId)
+            return service ? { folio: `Servicio: ${service.folio}`, asunto: service.asunto } : { folio: `Servicio #${report.value.origenDatosId}`, asunto: 'Servicio Programado' }
+        }
+        return { folio: 'Error', asunto: '' }
     }
 
-    // -- Edit Logic --
-    const showEditModal = ref(false)
-    const editForm = reactive({
-        estatusReporte: '',
-        desarrolloActividades: '',
-        fechaHoraFin: '',
-        horaSalidaBase: '',
-        horaRegresoABase: ''
-    })
-
-    const openEditModal = () => {
-        if (!report.value) return;
-        editForm.estatusReporte = report.value.estatusReporte;
-        editForm.desarrolloActividades = report.value.desarrolloActividades;
-        // input datetime-local requires YYYY-MM-DDThh:mm format
-        editForm.fechaHoraFin = report.value.fechaHoraFin ? report.value.fechaHoraFin.slice(0, 16) : ''; 
-        editForm.horaSalidaBase = report.value.horaSalidaBase ? report.value.horaSalidaBase.slice(0, 16) : ''; 
-        editForm.horaRegresoABase = report.value.horaRegresoABase ? report.value.horaRegresoABase.slice(0, 16) : ''; 
-        showEditModal.value = true;
-    }
-
-    const saveReportEdit = async () => {
-        if (!report.value || !currentUser.value) return;
-
-        // Determine what changed for the changelog
-        let changesDesc = [];
-        if (report.value.estatusReporte !== editForm.estatusReporte) {
-            changesDesc.push(`Cambió el estatus a ${editForm.estatusReporte}`);
-        }
-        if (report.value.desarrolloActividades !== editForm.desarrolloActividades) {
-            changesDesc.push(`Actualizó la descripción de actividades`);
-        }
-        if (report.value.fechaHoraFin !== editForm.fechaHoraFin) {
-            changesDesc.push(`Actualizó la fecha/hora de fin`);
-        }
-        if (report.value.horaSalidaBase !== editForm.horaSalidaBase) {
-            changesDesc.push(`Actualizó la hora de salida`);
-        }
-        if (report.value.horaRegresoABase !== editForm.horaRegresoABase) {
-            changesDesc.push(`Actualizó la hora de regreso a base`);
-        }
-
-        if (changesDesc.length === 0) {
-            showEditModal.value = false;
-            return; // No changes
-        }
-
-        // Persist changes via the API
-        const rawEstatus = ({ 'Cerrado / Trabajo Finalizado': 'finalizado', 'Abierto / Trabajo Parcial': 'parcial', 'Descartado / Cancelado': 'descartado' } as any)[editForm.estatusReporte] || 'parcial'
-        try {
-            await client.put(`/reportes/${report.value.idReporte}`, {
-                estatus: rawEstatus,
-                desarrollo: editForm.desarrolloActividades,
-                fecha_fin: editForm.fechaHoraFin || null,
-                hora_salida: editForm.horaSalidaBase || null,
-                hora_regreso: editForm.horaRegresoABase || null
-            })
-        } catch {
-            toast.error('No se pudo guardar el reporte. Intenta de nuevo.')
-            return
-        }
-
-        // Apply changes locally
-        report.value.estatusReporte = editForm.estatusReporte as 'Abierto / Trabajo Parcial' | 'Cerrado / Trabajo Finalizado' | 'Descartado / Cancelado';
-        report.value.desarrolloActividades = editForm.desarrolloActividades;
-        report.value.fechaHoraFin = editForm.fechaHoraFin;
-        report.value.horaSalidaBase = editForm.horaSalidaBase;
-        report.value.horaRegresoABase = editForm.horaRegresoABase;
-        
-        // Safety check array
-        if (!report.value.historialModificaciones) {
-            report.value.historialModificaciones = [];
-        }
-        
-        // Push activity log (session view of this change)
-        report.value.historialModificaciones.push({
-            idModificacion: Date.now(),
-            fechaModificacion: new Date().toISOString(),
-            idUsuario: (currentUser.value as any).id ?? (currentUser.value as any).idUsuario,
-            descripcion: changesDesc.join(' y ')
-        });
-
-        toast.success('Reporte actualizado correctamente')
-        showEditModal.value = false;
+    const goToEditReport = () => {
+        if (!report.value || !canEditReport.value) return;
+        router.push({ name: 'report-edit', params: { id: report.value.idReporte } })
     }
 
     const openSurvey = () => {
@@ -212,7 +127,6 @@ import client from '../../../api/client'
         router.push({ name: 'report-survey', params: { id: report.value.idReporte } })
     }
 
-    import { useToast } from 'vue-toastification'
     const toast = useToast()
 
     const previewUrl = ref<string | null>(null)
@@ -231,17 +145,18 @@ import client from '../../../api/client'
 
     // === Print helpers ===
     const companyName = computed(() => {
-        if (!report.value) return ''
-        return (currentUser.value as any)?.dependencia?.nombre || 'Empresa'
+        if (!report.value) return currentUser.value?.empresa?.nombre || 'Empresa'
+        return (report.value as any).empresaNombre || currentUser.value?.empresa?.nombre || 'Empresa'
     })
 
     const companyLogo = computed(() => {
-        return '' // No hay logo por API
+        if (!report.value) return currentUser.value?.empresa?.logo || ''
+        return (report.value as any).empresaLogo || currentUser.value?.empresa?.logo || ''
     })
 
     const getResponsableUser = computed(() => {
         if (!report.value || !report.value.responsableId) return null
-        return users.value.find((u: any) => u.id === report.value!.responsableId) || null
+        return users.value.find(u => u.idUsuario === report.value!.responsableId || u.id === report.value!.responsableId) || null
     })
 
     const displayResponsableNombre = computed(() => {
@@ -292,9 +207,7 @@ import client from '../../../api/client'
 
     const areaName = computed(() => {
         if (!report.value) return '---'
-        if (report.value.idSubdependencia === undefined || report.value.idSubdependencia === null) return 'Sin área'
-        const a = areas.value.find((x: any) => x.id === report.value!.idSubdependencia)
-        return a ? a.nombre : `Área #${report.value.idSubdependencia}`
+        return (report.value as any).nombreSubdependencia || getSubdependenciaName(report.value.idSubdependencia)
     })
 
 </script>
@@ -321,7 +234,7 @@ import client from '../../../api/client'
                             <span v-if="isDownloading">⏳ Generando...</span>
                             <span v-else>⬇️ Descargar PDF</span>
                         </button>
-                        <button v-if="currentUser?.rol === 1" class="btn-secondary" @click="openEditModal">✏️ Editar Reporte</button>
+                        <button v-if="canEditReport" class="btn-secondary" @click="goToEditReport">✏️ Editar Reporte</button>
                         <button class="btn-survey" @click="openSurvey">
                             ⭐ Encuesta al Cliente
                         </button>
@@ -493,47 +406,7 @@ import client from '../../../api/client'
             <button @click="goBack" class="btn-back mt-4">Regresar a la lista</button>
         </div>
 
-        <!-- Edit Modal Overlay -->
-        <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
-            <div class="modal-content">
-                <header class="modal-header">
-                    <h2>✏️ Editar Reporte</h2>
-                    <button class="btn-close" @click="showEditModal = false">&times;</button>
-                </header>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label>Estatus del Reporte</label>
-                        <select v-model="editForm.estatusReporte" class="form-control">
-                            <option value="Abierto / Trabajo Parcial">Abierto / Trabajo Parcial</option>
-                            <option value="Cerrado / Trabajo Finalizado">Cerrado / Trabajo Finalizado</option>
-                            <option value="Descartado / Cancelado">Descartado / Cancelado</option>
-                        </select>
-                    </div>
-                    <div class="grid-2-cols mt-4">
-                        <div class="form-group">
-                            <label>Hora de Salida Base</label>
-                            <input type="datetime-local" v-model="editForm.horaSalidaBase" class="form-control" />
-                        </div>
-                        <div class="form-group">
-                            <label>Fecha y Hora de Fin</label>
-                            <input type="datetime-local" v-model="editForm.fechaHoraFin" class="form-control" />
-                        </div>
-                        <div class="form-group">
-                            <label>Hora de Regreso a Base</label>
-                            <input type="datetime-local" v-model="editForm.horaRegresoABase" class="form-control" />
-                        </div>
-                    </div>
-                    <div class="form-group mt-4">
-                        <label>Desarrollo de Actividades</label>
-                        <textarea v-model="editForm.desarrolloActividades" rows="4" class="form-control"></textarea>
-                    </div>
-                </div>
-                <footer class="modal-footer mt-4">
-                    <button class="btn-cancel" @click="showEditModal = false">Cancelar</button>
-                    <button class="btn-save" @click="saveReportEdit">Guardar Cambios</button>
-                </footer>
-            </div>
-        </div>
+
 
         <!-- Image Preview Modal (On-Screen View Only) -->
         <div class="modal-overlay" v-if="previewUrl" @click="previewUrl = null">
@@ -566,7 +439,7 @@ import client from '../../../api/client'
                 <div class="print-datos-col">
                     <p>Fecha de elaboración: <strong>{{ formatDateShort(report.fechaElaboracion) }}</strong></p>
                     <p>Reporte elaborado por: {{ getUserName(report.creadoPor) }}</p>
-                    <p>Dependencia: {{ areaName }}</p>
+                    <p>Dependencia: {{ getSubdependenciaName(report.idSubdependencia) }}</p>
                     <p>Responsable dependencia: {{ displayResponsableNombre }}</p>
                     <p>Cargo: {{ displayResponsableCargo }}</p>
                 </div>

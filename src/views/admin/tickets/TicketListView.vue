@@ -1,51 +1,40 @@
 <script setup lang="ts">
-// @ts-nocheck
     import { ref, computed, onMounted } from 'vue'
     import { useRouter } from 'vue-router'
-    import { Search, Filter, ChevronRight, X } from 'lucide-vue-next'
+    import { Search, Filter, ChevronRight, X, FileText, FileEdit } from 'lucide-vue-next'
     import { useAuthStore } from '../../../stores/authStore'
     import { storeToRefs } from 'pinia'
+    import { apiFetch } from '../../../api/apiClient'
+    import type { Ticket } from '../../../data/mockTickets'
 
     // Store initialization
     const authStore = useAuthStore()
     const { currentUser } = storeToRefs(authStore)
 
-    // Import global data
-    import { mockTickets } from '../../../data/mockTickets'
-import client from '../../../api/client'
-
-    import type { Ticket } from '../../../data/mockTickets'
-
     const router = useRouter()
-    const tickets = ref<Ticket[]>(mockTickets)
-
-    const statusLabel = (code: string) => ({ abierto: 'Abierto', en_proceso: 'En Proceso', resuelto: 'Resuelto', cerrado: 'Cerrado' } as any)[code] || code
-    const priorityLabel = (code: string) => ({ alta: 'Alta', media: 'Media', baja: 'Baja' } as any)[code] || code
-    const fmtShort = (iso?: string | null) => (iso ? String(iso).replace('T', ' ').slice(0, 16) : '')
+    const tickets = ref<Ticket[]>([])
+    const reportes = ref<any[]>([])
+    const isLoading = ref(true)
 
     const fetchTickets = async () => {
+        isLoading.value = true
         try {
-            const res = await client.get('/tickets', { params: { per_page: 100 } }).then(r => r.data)
-            const list = res.data || res
-            if (Array.isArray(list) && list.length) {
-                tickets.value = list.map((x: any) => ({
-                    id: x.id,
-                    idDependencia: x.dependencia_id,
-                    folio: x.folio,
-                    asunto: x.asunto,
-                    descripcion: x.descripcion || '',
-                    solicitante: x.solicitante,
-                    cargo: x.cargo,
-                    prioridad: priorityLabel(x.prioridad),
-                    estatus: statusLabel(x.estatus),
-                    fechaSolicitud: fmtShort(x.fecha_solicitud),
-                    fechaAtencion: x.fecha_atencion ? fmtShort(x.fecha_atencion) : '',
-                    atendio: x.asignado ? `${x.asignado.nombre || ''} ${x.asignado.apellidos || ''}`.trim() : ''
-                }))
-            }
-        } catch {}
+            const [tRes, rRes] = await Promise.all([
+                apiFetch('/tickets'),
+                apiFetch('/reportes').catch(() => ({ data: [] }))
+            ])
+            if (tRes.data) tickets.value = tRes.data
+            if (rRes.data) reportes.value = rRes.data
+        } catch (error) {
+            console.error('Error al cargar tickets:', error)
+        } finally {
+            isLoading.value = false
+        }
     }
-    onMounted(fetchTickets)
+
+    onMounted(() => {
+        fetchTickets()
+    })
 
     // Filter state
     const searchQuery = ref('')
@@ -53,21 +42,33 @@ import client from '../../../api/client'
     const priorityFilter = ref('')
     const dateFilter = ref('')
 
-    // Filter by enterprise and search criteria
+    // Filter by enterprise and search criteria (Punto 3: Solo rol 1 y 2 ven todo; otros solo ven asignados)
     const filteredTickets = computed(() => {
         return tickets.value.filter(ticket => {
-            const depId = (currentUser.value as any)?.dependencia_id ?? (currentUser.value as any)?.idDependencia
-            if (ticket.idDependencia !== undefined && depId !== undefined && ticket.idDependencia !== depId) {
+            if (currentUser.value?.idDependencia && ticket.idDependencia && ticket.idDependencia !== currentUser.value.idDependencia) {
                 return false
             }
 
-            const q = searchQuery.value.toLowerCase()
-            const matchesSearch = searchQuery.value === '' ||
-                (ticket.asunto || '').toLowerCase().includes(q) ||
-                (ticket.descripcion || '').toLowerCase().includes(q)
+            // Restricción por rol
+            if (currentUser.value && currentUser.value.rol !== 1 && currentUser.value.rol !== 2) {
+                const userFullName = `${currentUser.value.nombre} ${currentUser.value.apellidos}`.trim().toLowerCase()
+                const userName = (currentUser.value.nombre || '').trim().toLowerCase()
+                const atendioText = (ticket.atendio || '').toLowerCase()
+                const ticketTechId = (ticket as any).idTecnicoAtendio || (ticket as any).id_tecnico_atendio
+
+                const isAssigned = (ticketTechId && ticketTechId === currentUser.value.idUsuario) ||
+                                   (atendioText && (atendioText.includes(userFullName) || atendioText.includes(userName)))
+                if (!isAssigned) {
+                    return false
+                }
+            }
+
+            const matchesSearch = searchQuery.value === '' || 
+                ticket.asunto.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+                ticket.descripcion.toLowerCase().includes(searchQuery.value.toLowerCase())
             const matchesStatus = statusFilter.value === '' || ticket.estatus === statusFilter.value
             const matchesPriority = priorityFilter.value === '' || ticket.prioridad === priorityFilter.value
-            const matchesDate = dateFilter.value === '' || (ticket.fechaSolicitud || '').slice(0, 10) === dateFilter.value
+            const matchesDate = dateFilter.value === '' || ticket.fechaSolicitud === dateFilter.value
 
             return matchesSearch && matchesStatus && matchesPriority && matchesDate
         })        
@@ -92,6 +93,24 @@ import client from '../../../api/client'
     // Navigation Details
     const viewTicketDetails = (id: number) => {
         router.push({ name: 'ticket-detail', params: { id: id } })
+    }
+
+    // Navegar directamente a generar reporte para este ticket (Punto 4)
+    const generarReporte = (id: number) => {
+        router.push({ name: 'reports-new', query: { tipo: 'Ticket', id: id } })
+    }
+
+    const getReportForTicket = (ticketId: number) => {
+        return reportes.value.find(r => r.tipoReporte === 'Ticket' && (r.origenDatosId === ticketId || r.origen_datos_id === ticketId))
+    }
+
+    const editarReporteTicket = (ticket: Ticket) => {
+        const report = getReportForTicket(ticket.id)
+        if (report) {
+            router.push({ name: 'report-edit', params: { id: report.idReporte || report.id } })
+        } else {
+            generarReporte(ticket.id)
+        }
     }
 
     // Navigation Create a ticket
@@ -239,7 +258,31 @@ import client from '../../../api/client'
                         </td>
 
                         <td class="align-middle text-right pr-6">
-                            <ChevronRight :size="20" class="chevron-icon" />
+                            <div class="flex items-center justify-end gap-2">
+                                <!-- Si el ticket ya está resuelto, cerrado o ya tiene reporte, mostrar "Editar Reporte" -->
+                                <button
+                                    v-if="ticket.estatus === 'Resuelto' || ticket.estatus === 'Cerrado' || getReportForTicket(ticket.id)"
+                                    type="button"
+                                    class="btn-table-edit-report"
+                                    @click.stop="editarReporteTicket(ticket)"
+                                    title="Editar reporte técnico asociado a este ticket"
+                                >
+                                    <FileEdit :size="14" />
+                                    <span>Editar Reporte</span>
+                                </button>
+                                <!-- Si aún no está resuelto, mostrar botón habitual de Reportar -->
+                                <button
+                                    v-else
+                                    type="button"
+                                    class="btn-table-report"
+                                    @click.stop="generarReporte(ticket.id)"
+                                    title="Generar reporte técnico para este ticket"
+                                >
+                                    <FileText :size="14" />
+                                    <span>Reportar</span>
+                                </button>
+                                <ChevronRight :size="20" class="chevron-icon" />
+                            </div>
                         </td>
                     </tr>
                 </tbody>
@@ -276,6 +319,49 @@ import client from '../../../api/client'
         &.en-proceso { background: #dcfce7; color: #15803d; }     
         &.resuelto { background: #e0f2fe; color: #0369a1; }     
         &.cerrado { background: #f1f5f9; color: #475569; }    
+    }
+
+    .btn-table-report {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: #eff6ff;
+        color: #2563eb;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+
+        &:hover {
+            background: #2563eb;
+            color: #ffffff;
+            border-color: #2563eb;
+        }
+    }
+
+    .btn-table-edit-report {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: #ecfdf5;
+        color: #059669;
+        border: 1px solid #a7f3d0;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        white-space: nowrap;
+
+        &:hover {
+            background: #059669;
+            color: #ffffff;
+            border-color: #059669;
+        }
     }
 
 
