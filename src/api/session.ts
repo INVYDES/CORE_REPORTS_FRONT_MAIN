@@ -91,7 +91,8 @@ export function clearSession(): void {
   }
   // Limpiar la cookie jwt que usa el worker de Cloudflare para el redirect.
   try {
-    document.cookie = 'jwt=; Path=/; Max-Age=0; Secure; SameSite=Strict'
+    const secure = window.location.protocol === 'https:' ? '; Secure' : ''
+    document.cookie = `jwt=; Path=/; Max-Age=0; SameSite=Strict${secure}`
   } catch {
     /* no-op */
   }
@@ -99,7 +100,7 @@ export function clearSession(): void {
 
 export interface UsuarioAlmacenado {
   id: number
-  dependencia_id: number
+  dependencia_id: number | null
   numero_empleado: string | null
   rol: number
   nombre: string
