@@ -214,7 +214,7 @@
           <option value="activa">Activas</option>
           <option value="vencida">Vencidas</option>
           <option value="desactivada">Desactivadas</option>
-          <option value="trial">En trial</option>
+          <option value="trial">Plan gratis</option>
         </select>
         <span class="total">{{ meta.total }} clientes</span>
       </div>
@@ -249,7 +249,7 @@
                   <small>{{ dep.telefono || '' }}</small>
                 </div>
               </td>
-              <td class="capitalize">{{ dep.tipo_licencia }}</td>
+              <td class="capitalize">{{ dep.tipo_licencia === 'trial' ? 'Gratis' : dep.tipo_licencia }}</td>
               <td>{{ fmtDate(dep.fecha_expiracion) }}</td>
               <td>
                 <span class="usage">{{ dep.usuarios_count ?? 0 }} / {{ dep.limite_usuarios }}</span>
@@ -334,7 +334,7 @@
           <label>
             Plan
             <select v-model="editing.tipo_licencia">
-              <option value="trial">Trial</option>
+              <option value="trial">Gratis</option>
               <option value="mensual">Mensual</option>
               <option value="anual">Anual</option>
             </select>

@@ -25,7 +25,7 @@
   const toast = useToast()
 
   const planLabel = (code: string) =>
-    (({ trial: 'Trial', mensual: 'Mensual', anual: 'Anual' }) as any)[code] || code || '—'
+    (({ trial: 'Gratis', mensual: 'Mensual', anual: 'Anual' }) as any)[code] || code || '—'
   const tierLabel = (limit: number) => {
     if (!limit) return 'Básico'
     if (limit <= 5) return 'Básico'

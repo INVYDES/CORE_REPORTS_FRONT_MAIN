@@ -60,7 +60,7 @@
             <span class="help-icon"><ArrowRight :size="18" /></span>
             <div>
               <strong>Crear una cuenta</strong>
-              <small>Prueba gratis por 7 días, sin tarjeta.</small>
+              <small>Plan gratis sin fecha de expiración, sin tarjeta.</small>
             </div>
           </router-link>
 

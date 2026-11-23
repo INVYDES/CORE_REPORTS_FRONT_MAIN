@@ -56,7 +56,7 @@ export default {
       how: 'How it works',
       pricing: 'Pricing',
       login: 'Sign in',
-      start: 'Free trial',
+      start: 'Free plan',
       menu: 'Open menu',
     },
     hero: {
@@ -64,9 +64,9 @@ export default {
       title: 'Maintenance, tickets and reports',
       titleAccent: 'in a single control center',
       lead: 'coreReports centralizes your technicians’ work: every ticket, scheduled service and report is measured, backed by evidence and shared with your client in minutes.',
-      ctaPrimary: 'Start free trial',
+      ctaPrimary: 'Start for free',
       ctaSecondary: 'See the dashboard',
-      note1: '7-day trial',
+      note1: 'Free forever',
       note2: 'No credit card',
       note3: 'Cancel anytime',
       stats: {
@@ -164,7 +164,7 @@ export default {
       steps: {
         one: {
           title: 'Create your company',
-          text: 'Register your company with your tax details and start the free trial.',
+          text: 'Register your company with your tax details and start on the free plan.',
         },
         two: {
           title: 'Set up your operation',
@@ -186,7 +186,7 @@ export default {
       eyebrow: 'Pricing',
       title: 'Clear plans, no hidden costs',
       lead: 'Start free and change plans when your operation demands it.',
-      note: 'Prices in Mexican pesos (MXN), VAT included. Annual plans are paid upfront.',
+      note: 'Prices in Mexican pesos (MXN), VAT included. Paid plans include 1 month free; annual plans are paid upfront.',
       popular: 'Most chosen',
       toggle: {
         monthly: 'Monthly',
@@ -196,7 +196,8 @@ export default {
       perYear: 'MXN per year',
       vat: 'VAT included',
       freePrice: 'Free',
-      freePeriod: '7 days',
+      freePeriod: 'No expiration date',
+      paidTrial: 'Includes 1 month free',
       customPrice: 'Custom',
       customPeriod: 'More than 30 users',
       cta: {
@@ -254,7 +255,7 @@ export default {
     legal: 'Legal',
     contact: 'Contact',
     home: 'Home',
-    trial: 'Free trial',
+    trial: 'Free plan',
     login: 'Sign in',
     pricing: 'Pricing',
     privacy: 'Privacy notice',

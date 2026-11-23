@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, reactive } from 'vue'
+  import { computed, onMounted, reactive, ref } from 'vue'
   import { useRouter } from 'vue-router'
   import client from '../../api/client'
   import { useAuthStore } from '../../stores/authStore'
@@ -9,21 +9,143 @@
   const router = useRouter()
   const toast = useToast()
   const isLoading = ref(false)
+  const loadingPlans = ref(true)
   const showPassword = ref(false)
 
   const fiscalRegimes = [
     { code: '601', label: '601 - General de Ley Personas Morales' },
-    { code: '626', label: '626 - Simplificado de Confianza' },
+    { code: '603', label: '603 - Personas Morales con Fines no Lucrativos' },
+    { code: '605', label: '605 - Sueldos y Salarios e Ingresos Asimilados' },
+    { code: '606', label: '606 - Arrendamiento' },
+    { code: '608', label: '608 - Demás ingresos' },
+    { code: '612', label: '612 - Personas Físicas con Actividades Empresariales' },
+    { code: '616', label: '616 - Sin obligaciones fiscales' },
+    { code: '621', label: '621 - Incorporación Fiscal' },
+    { code: '622', label: '622 - Actividades Agrícolas, Ganaderas, Silvícolas y Pesqueras' },
+    { code: '626', label: '626 - Régimen Simplificado de Confianza' },
   ]
+
+  // Catálogo c_UsoCFDI vigente del SAT (CFDI 4.0, 24 claves).
   const cfdiUses = [
     { code: 'G01', label: 'G01 - Adquisición de mercancías' },
+    { code: 'G02', label: 'G02 - Devoluciones, descuentos o bonificaciones' },
     { code: 'G03', label: 'G03 - Gastos en general' },
+    { code: 'I01', label: 'I01 - Construcciones' },
+    { code: 'I02', label: 'I02 - Mobiliario y equipo de oficina por inversiones' },
+    { code: 'I03', label: 'I03 - Equipo de transporte' },
+    { code: 'I04', label: 'I04 - Equipo de cómputo y accesorios' },
+    { code: 'I05', label: 'I05 - Dados, troqueles, moldes, matrices y herramental' },
+    { code: 'I06', label: 'I06 - Comunicaciones telefónicas' },
+    { code: 'I07', label: 'I07 - Comunicaciones satelitales' },
+    { code: 'I08', label: 'I08 - Otra maquinaria y equipo' },
+    { code: 'D01', label: 'D01 - Honorarios médicos, dentales y gastos hospitalarios' },
+    { code: 'D02', label: 'D02 - Gastos médicos por incapacidad o discapacidad' },
+    { code: 'D03', label: 'D03 - Gastos funerales' },
+    { code: 'D04', label: 'D04 - Donativos' },
+    {
+      code: 'D05',
+      label: 'D05 - Intereses reales pagados por créditos hipotecarios (casa habitación)',
+    },
+    { code: 'D06', label: 'D06 - Aportaciones voluntarias al SAR' },
+    { code: 'D07', label: 'D07 - Primas por seguros de gastos médicos' },
+    { code: 'D08', label: 'D08 - Gastos de transportación escolar obligatoria' },
+    {
+      code: 'D09',
+      label: 'D09 - Depósitos en cuentas para el ahorro, primas de planes de pensiones',
+    },
+    { code: 'D10', label: 'D10 - Pagos por servicios educativos (colegiaturas)' },
+    { code: 'S01', label: 'S01 - Sin efectos fiscales' },
+    { code: 'CP01', label: 'CP01 - Pagos' },
+    { code: 'CN01', label: 'CN01 - Nómina' },
   ]
-  const plans = [
-    { id: 'free', label: 'Prueba gratuita (10 pedidos/día por 7 días)' },
-    { id: 'monthly', label: 'Mensual - $399.00 IVA Incluido' },
-    { id: 'annual', label: 'Anual - $3830.40 (20% descuento)' },
+
+  const fallbackLicencias = [
+    {
+      id: 1,
+      nombre: 'Gratis',
+      codigo: 'trial',
+      tipo: 'trial',
+      max_usuarios: 2,
+      max_reportes_mensuales: 999999,
+      precio: 0,
+      precio_anual: null,
+      dias_prueba: 0,
+      descripcion: 'Plan gratuito para 2 usuarios, sin fecha de expiración',
+    },
+    {
+      id: 2,
+      nombre: '5 usuarios - Mensual',
+      codigo: 'usuarios_5_mensual',
+      tipo: 'mensual',
+      max_usuarios: 5,
+      max_reportes_mensuales: 999999,
+      precio: 399,
+      precio_anual: null,
+      dias_prueba: 30,
+      descripcion: '5 usuarios · $399 MXN al mes · incluye 1 mes gratis',
+    },
+    {
+      id: 3,
+      nombre: '5 usuarios - Anual',
+      codigo: 'usuarios_5_anual',
+      tipo: 'anual',
+      max_usuarios: 5,
+      max_reportes_mensuales: 999999,
+      precio: 399,
+      precio_anual: 3990,
+      dias_prueba: 30,
+      descripcion: '5 usuarios · $3,990 MXN al año · incluye 1 mes gratis',
+    },
+    {
+      id: 4,
+      nombre: '10 usuarios - Mensual',
+      codigo: 'usuarios_10_mensual',
+      tipo: 'mensual',
+      max_usuarios: 10,
+      max_reportes_mensuales: 999999,
+      precio: 699,
+      precio_anual: null,
+      dias_prueba: 30,
+      descripcion: '10 usuarios · $699 MXN al mes · incluye 1 mes gratis',
+    },
+    {
+      id: 5,
+      nombre: '10 usuarios - Anual',
+      codigo: 'usuarios_10_anual',
+      tipo: 'anual',
+      max_usuarios: 10,
+      max_reportes_mensuales: 999999,
+      precio: 699,
+      precio_anual: 6990,
+      dias_prueba: 30,
+      descripcion: '10 usuarios · $6,990 MXN al año · incluye 1 mes gratis',
+    },
+    {
+      id: 6,
+      nombre: '30 usuarios - Mensual',
+      codigo: 'usuarios_30_mensual',
+      tipo: 'mensual',
+      max_usuarios: 30,
+      max_reportes_mensuales: 999999,
+      precio: 1999,
+      precio_anual: null,
+      dias_prueba: 30,
+      descripcion: '30 usuarios · $1,999 MXN al mes · incluye 1 mes gratis',
+    },
+    {
+      id: 7,
+      nombre: '30 usuarios - Anual',
+      codigo: 'usuarios_30_anual',
+      tipo: 'anual',
+      max_usuarios: 30,
+      max_reportes_mensuales: 999999,
+      precio: 1999,
+      precio_anual: 19990,
+      dias_prueba: 30,
+      descripcion: '30 usuarios · $19,990 MXN al año · incluye 1 mes gratis',
+    },
   ]
+
   const formData = reactive({
     companyName: '',
     rfc: '',
@@ -42,16 +164,63 @@
     state: '',
     municipality: '',
     phone: '',
-    planType: '',
     paymentMethod: '',
     paymentForm: '',
     invoiceRequired: false,
   })
-  const showLicencias = ref(false)
+
   const licencias = ref<any[]>([])
   const selectedLicencia = ref<number | null>(null)
+  const licenciaRegistrada = ref<any | null>(null)
+  const showPago = ref(false)
+
+  const selectedPlan = computed(
+    () => licencias.value.find(lic => lic.id === selectedLicencia.value) || null
+  )
+
+  const esPlanGratuito = (lic: any) => lic?.codigo === 'trial' || Number(lic?.precio) === 0
+
+  const formatoMoneda = (valor: number) =>
+    new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: 'MXN',
+      maximumFractionDigits: 0,
+    }).format(valor)
+
+  const precioPlan = (lic: any) => {
+    if (esPlanGratuito(lic)) return 'Gratis'
+    const valor = lic.tipo === 'anual' && lic.precio_anual ? lic.precio_anual : lic.precio
+    return `${formatoMoneda(Number(valor))} ${lic.tipo === 'anual' ? 'al año' : 'al mes'}`
+  }
+
+  const etiquetaPlan = (lic: any) => {
+    const condicion = esPlanGratuito(lic) ? 'sin fecha de expiración' : '1 mes gratis'
+    return `${lic.nombre} — ${precioPlan(lic)} · ${condicion}`
+  }
+
+  const cargarLicencias = async () => {
+    loadingPlans.value = true
+    try {
+      const res = await client.get('/licencias/disponibles')
+      const data = res.data.data || res.data
+      licencias.value = Array.isArray(data) && data.length > 0 ? data : fallbackLicencias
+    } catch {
+      licencias.value = fallbackLicencias
+    } finally {
+      loadingPlans.value = false
+      if (!selectedLicencia.value) {
+        selectedLicencia.value =
+          licencias.value.find(lic => esPlanGratuito(lic))?.id ?? licencias.value[0]?.id ?? null
+      }
+    }
+  }
 
   const handleRegister = async () => {
+    if (!selectedLicencia.value) {
+      toast.error('Selecciona un plan para continuar')
+      return
+    }
+
     isLoading.value = true
     try {
       const { data } = await client.post('/public/register-compania', {
@@ -65,38 +234,22 @@
         lastNamePaternal: formData.lastNamePaternal,
         lastNameMaternal: formData.lastNameMaternal,
         phone: formData.phone,
-        planType: formData.planType,
+        licenciaId: selectedLicencia.value,
       })
-      // Guardar la sesión (sessionStorage + header) y entrar a la app
+
       if (data.token && data.user) {
         useAuthStore().applySession(data.user, data.token)
       }
-      // Si eligió trial o no eligió plan, ir directo al dashboard
-      if (!formData.planType || formData.planType === 'free' || formData.planType === 'trial') {
-        toast.success('Cuenta creada con plan Trial. ¡Bienvenido!')
+
+      if (!data.requiere_pago) {
+        toast.success('Cuenta creada con el plan Gratis. ¡Bienvenido!')
         router.push({ name: 'dashboard' })
         return
       }
-      // Para planes de pago, mostrar selector de licencias con Mercado Pago
-      toast.success('Cuenta creada. Selecciona tu licencia para continuar.')
-      // Cargar licencias disponibles
-      try {
-        const res = await client.get('/licencias/disponibles')
-        licencias.value = res.data.data || res.data || []
-      } catch {
-        // Fallback hardcode si no hay endpoint
-        licencias.value = [
-          { id: 2, nombre: 'Mensual', tipo: 'mensual', precio: 399, descripcion: 'Plan mensual' },
-          {
-            id: 3,
-            nombre: 'Anual',
-            tipo: 'anual',
-            precio: 3830.4,
-            descripcion: 'Plan anual 20% descuento',
-          },
-        ]
-      }
-      showLicencias.value = true
+
+      licenciaRegistrada.value = data.licencia || selectedPlan.value
+      showPago.value = true
+      toast.success('Cuenta creada con 1 mes gratis del plan que elegiste.')
     } catch (e: any) {
       toast.error(
         e?.response?.data?.message ||
@@ -109,13 +262,15 @@
   }
 
   const pagarConMercadoPago = async () => {
-    if (!selectedLicencia.value) {
-      toast.error('Selecciona una licencia')
+    const licencia = licenciaRegistrada.value || selectedPlan.value
+    if (!licencia?.id) {
+      toast.error('No se encontró la licencia seleccionada')
       return
     }
+
     isLoading.value = true
     try {
-      const res = await client.post(`/licencias/${selectedLicencia.value}/comprar-mercadopago`)
+      const res = await client.post(`/licencias/${licencia.id}/comprar-mercadopago`)
       const initPoint = res.data.init_point || res.data.initPoint
       if (initPoint) {
         toast.success('Redirigiendo a Mercado Pago...')
@@ -130,6 +285,8 @@
       isLoading.value = false
     }
   }
+
+  onMounted(cargarLicencias)
 </script>
 
 <template>
@@ -323,12 +480,25 @@
             <!-- Tipo de licencia (Plan)-->
             <div class="form-group">
               <label>Tipo de Licencia (Plan) *</label>
-              <select v-model="formData.planType" required>
-                <option value="" disabled>Select a plan...</option>
-                <option v-for="plan in plans" :key="plan.id" :value="plan.id">
-                  {{ plan.label }}
+              <select v-model="selectedLicencia" required :disabled="loadingPlans">
+                <option :value="null" disabled>
+                  {{ loadingPlans ? 'Cargando planes...' : 'Seleccione un plan...' }}
+                </option>
+                <option v-for="lic in licencias" :key="lic.id" :value="lic.id">
+                  {{ etiquetaPlan(lic) }}
                 </option>
               </select>
+              <p class="plan-hint">
+                {{
+                  selectedPlan
+                    ? `${selectedPlan.descripcion} · ${selectedPlan.max_usuarios} usuarios`
+                    : 'El plan Gratis no tiene fecha de expiración.'
+                }}
+              </p>
+              <p class="plan-hint">
+                El plan Gratis no expira. Todos los planes de pago incluyen 1 mes gratis; si pagas
+                ahora, tu periodo de pago comienza al terminar ese mes.
+              </p>
             </div>
 
             <!-- 2 input fields in a single row-->
@@ -363,9 +533,9 @@
             </div>
           </div>
 
-          <!-- SECCIÓN 5 - SELECCIÓN DE LICENCIA (aparece después de registro) -->
+          <!-- SECCIÓN 5 - MES GRATIS DEL PLAN ELEGIDO -->
           <div
-            v-if="showLicencias"
+            v-if="showPago && licenciaRegistrada"
             class="form-section"
             style="
               border: 2px solid #3b82f6;
@@ -375,60 +545,21 @@
             "
           >
             <h3>
-              <span class="step-num" style="background: #10b981">5</span> Selecciona tu licencia
+              <span class="step-num" style="background: #10b981">5</span> Tu mes gratis está activo
             </h3>
             <p class="subtitle" style="margin-bottom: 1rem; color: #475569">
-              Tu cuenta ya fue creada. Elige un plan para activar tu licencia y serás redirigido a
-              Mercado Pago.
+              Tu cuenta ya usa el plan <strong>{{ licenciaRegistrada.nombre }}</strong> durante 1
+              mes gratis. Si deseas asegurar la renovación, paga ahora con Mercado Pago: tu periodo
+              de pago comenzará al terminar ese mes.
             </p>
-            <div
-              v-for="lic in licencias"
-              :key="lic.id"
-              @click="selectedLicencia = lic.id"
-              :style="{
-                border: selectedLicencia === lic.id ? '2px solid #3b82f6' : '1px solid #cbd5e1',
-                background: selectedLicencia === lic.id ? '#dbeafe' : 'white',
-                borderRadius: '8px',
-                padding: '1rem',
-                marginBottom: '0.75rem',
-                cursor: 'pointer',
-              }"
-            >
-              <div style="display: flex; justify-content: space-between; align-items: center">
-                <div>
-                  <strong>{{ lic.nombre }}</strong>
-                  <span
-                    style="
-                      background: #e0e7ff;
-                      padding: 2px 6px;
-                      border-radius: 4px;
-                      font-size: 0.75rem;
-                    "
-                    >{{ lic.tipo }}</span
-                  >
-                  <div style="font-size: 0.85rem; color: #475569; margin-top: 0.25rem">
-                    {{ lic.descripcion }}
-                  </div>
-                  <div style="font-size: 0.8rem; color: #64748b">
-                    {{ lic.max_usuarios }} usuarios • {{ lic.max_reportes_mensuales }} reportes/mes
-                  </div>
-                </div>
-                <div style="text-align: right">
-                  <div style="font-weight: 700; color: #1e3a8a">${{ lic.precio }} MXN</div>
-                  <div v-if="lic.precio_anual" style="font-size: 0.75rem; color: #64748b">
-                    Anual ${{ lic.precio_anual }}
-                  </div>
-                </div>
-              </div>
-            </div>
             <button
               type="button"
               @click="pagarConMercadoPago"
-              :disabled="isLoading || !selectedLicencia"
+              :disabled="isLoading"
               class="btn-primary"
-              style="margin-top: 1rem; background: #009ee3"
+              style="background: #009ee3"
             >
-              {{ isLoading ? 'Creando preferencia...' : 'Pagar con Mercado Pago' }}
+              {{ isLoading ? 'Creando preferencia...' : 'Pagar ahora con Mercado Pago' }}
             </button>
             <button
               type="button"
@@ -444,13 +575,13 @@
                 color: #475569;
               "
             >
-              Continuar con Trial gratis
+              Continuar con mi mes gratis
             </button>
           </div>
 
           <!-- SECCIÓN 5 - BOTÓN "ENVIAR"-->
-          <div v-if="!showLicencias" class="form-actions">
-            <button type="submit" :disabled="isLoading" class="btn-primary">
+          <div v-if="!showPago" class="form-actions">
+            <button type="submit" :disabled="isLoading || loadingPlans" class="btn-primary">
               {{ isLoading ? 'Registrando...' : 'Crear cuenta' }}
             </button>
             <p class="login-link">
@@ -598,6 +729,13 @@
         outline: none;
       }
     }
+  }
+
+  .plan-hint {
+    margin: 0.45rem 0 0;
+    color: #64748b;
+    font-size: 0.78rem;
+    line-height: 1.4;
   }
 
   // Mostrar/ocultar contraseña

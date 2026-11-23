@@ -19,7 +19,10 @@
   const comprando = ref<string | null>(null)
 
   const dependencia = computed(() => currentUser.value?.dependencia || null)
-  const planActual = computed(() => dependencia.value?.tipo_licencia || '-')
+  const planActual = computed(() => {
+    const plan = dependencia.value?.tipo_licencia || ''
+    return (({ trial: 'Gratis', mensual: 'Mensual', anual: 'Anual' }) as any)[plan] || plan || '-'
+  })
   const expiracion = computed(() =>
     dependencia.value?.fecha_expiracion
       ? String(dependencia.value.fecha_expiracion).slice(0, 10)

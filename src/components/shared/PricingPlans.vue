@@ -98,6 +98,9 @@
           <h3>{{ t(plan.nombreKey) }}</h3>
           <p class="price">{{ precioVisible(plan) }}</p>
           <p class="period">{{ periodoVisible(plan) }}</p>
+          <p v-if="!plan.gratuito && !plan.empresarial" class="trial-note">
+            {{ t('landing.pricing.paidTrial') }}
+          </p>
         </header>
 
         <p class="plan-desc">{{ t(plan.descripcionKey) }}</p>
@@ -257,6 +260,17 @@
     margin: 0.25rem 0 0;
     color: var(--pp-muted);
     font-size: 0.72rem;
+  }
+
+  .trial-note {
+    display: inline-block;
+    margin: 0.45rem 0 0;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(34, 197, 94, 0.14);
+    color: #86efac;
+    font-size: 0.64rem;
+    font-weight: 700;
   }
 
   .plan-desc {

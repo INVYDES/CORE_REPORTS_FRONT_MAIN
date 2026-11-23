@@ -56,7 +56,7 @@ export default {
       how: 'Cómo funciona',
       pricing: 'Precios',
       login: 'Iniciar sesión',
-      start: 'Prueba gratis',
+      start: 'Plan gratis',
       menu: 'Abrir menú',
     },
     hero: {
@@ -64,9 +64,9 @@ export default {
       title: 'Mantenimiento, tickets y reportes',
       titleAccent: 'en un solo centro de control',
       lead: 'coreReports centraliza el trabajo de tus técnicos: cada ticket, servicio programado y reporte queda medido, con evidencia y compartido con tu cliente en minutos.',
-      ctaPrimary: 'Comenzar prueba gratis',
+      ctaPrimary: 'Comenzar gratis',
       ctaSecondary: 'Ver el tablero',
-      note1: '7 días de prueba',
+      note1: 'Gratis para siempre',
       note2: 'Sin tarjeta de crédito',
       note3: 'Cancela cuando quieras',
       stats: {
@@ -164,7 +164,7 @@ export default {
       steps: {
         one: {
           title: 'Crea tu empresa',
-          text: 'Registra tu compañía con tus datos fiscales y arranca con la prueba gratuita.',
+          text: 'Registra tu compañía con tus datos fiscales y arranca con el plan gratuito.',
         },
         two: {
           title: 'Da de alta tu operación',
@@ -186,7 +186,7 @@ export default {
       eyebrow: 'Precios',
       title: 'Planes claros, sin costos escondidos',
       lead: 'Empieza gratis y cambia de plan cuando tu operación lo pida.',
-      note: 'Precios en pesos mexicanos (MXN) e IVA incluido. El plan anual se cobra por adelantado.',
+      note: 'Precios en pesos mexicanos (MXN) e IVA incluido. Los planes de pago incluyen 1 mes gratis; el plan anual se cobra por adelantado.',
       popular: 'Más elegido',
       toggle: {
         monthly: 'Mensual',
@@ -196,7 +196,8 @@ export default {
       perYear: 'MXN al año',
       vat: 'IVA incluido',
       freePrice: 'Gratis',
-      freePeriod: '7 días',
+      freePeriod: 'Sin fecha de expiración',
+      paidTrial: 'Incluye 1 mes gratis',
       customPrice: 'A la medida',
       customPeriod: 'Más de 30 usuarios',
       cta: {
@@ -254,7 +255,7 @@ export default {
     legal: 'Legal',
     contact: 'Contacto',
     home: 'Inicio',
-    trial: 'Prueba gratis',
+    trial: 'Plan gratis',
     login: 'Iniciar sesión',
     pricing: 'Precios',
     privacy: 'Aviso de privacidad',
