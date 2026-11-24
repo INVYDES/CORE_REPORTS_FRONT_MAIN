@@ -545,10 +545,8 @@
       responsable: String(editForm.responsableTexto || '').trim() || undefined,
       cargo: String(editForm.cargoTexto || '').trim() || undefined,
       esEnTercero: !!editForm.esEnTercero,
-      fallaLibre:
-        report.value.tipoReporte === 'Libre'
-          ? String(editForm.fallaReportada || '').trim() || undefined
-          : reportExtraMeta.value.fallaLibre,
+      falla: String(editForm.fallaReportada || '').trim() || undefined,
+      fallaLibre: String(editForm.fallaReportada || '').trim() || undefined,
       materiales: materialesLimpios,
       evidenciaComentarios,
     }
@@ -1963,7 +1961,7 @@
                 </div>
               </div>
 
-              <div class="form-group mt-3" v-if="report?.tipoReporte === 'Libre'">
+              <div class="form-group mt-3">
                 <label>Descripción de la falla reportada</label>
                 <textarea
                   v-model="editForm.fallaReportada"
