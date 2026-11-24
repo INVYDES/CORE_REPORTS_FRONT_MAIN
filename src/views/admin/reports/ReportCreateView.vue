@@ -17,7 +17,17 @@
   import client from '../../../api/client'
   import { calcNetHoursText, calcDragHoursText } from '../../../utils/reportMeta'
   import { useToast } from 'vue-toastification'
-  import { Image as ImageIcon, Upload, Camera, FileText, Mail, Plus, X } from 'lucide-vue-next'
+  import {
+    Image as ImageIcon,
+    Upload,
+    Camera,
+    FileText,
+    Mail,
+    Plus,
+    X,
+    Pencil,
+  } from 'lucide-vue-next'
+  import EvidenceImageEditorModal from '../../../components/shared/EvidenceImageEditorModal.vue'
   const toast = useToast()
 
   const props = defineProps<{ isModal?: boolean }>()
@@ -515,6 +525,34 @@
   }
 
   const previewUrl = ref<string | null>(null)
+  const showImageEditor = ref(false)
+  const editingImageIndex = ref<number | null>(null)
+  const editingImageSrc = ref('')
+  const editingImageName = ref('')
+
+  const openImageEditor = (idx: number) => {
+    const item = formData.evidenciaFotografica[idx]
+    if (!item || !item.url) return
+    editingImageIndex.value = idx
+    editingImageSrc.value = item.url
+    editingImageName.value = item.nombre || `evidencia-${idx + 1}.jpg`
+    showImageEditor.value = true
+  }
+
+  const onImageEdited = ({ file, blobUrl }: { file: File; blobUrl: string }) => {
+    const idx = editingImageIndex.value
+    if (idx === null) return
+    const item = formData.evidenciaFotografica[idx]
+    if (!item) return
+    if (item.url && item.url.startsWith('blob:')) {
+      URL.revokeObjectURL(item.url)
+    }
+    item.url = blobUrl
+    item.nombre = file.name
+    item.tipoArchivo = file.type
+    pendingFiles.value[idx] = file
+    toast.success('Imagen editada lista para subir')
+  }
 
   const handleCancel = () => {
     if (props.isModal) emit('close')
@@ -1054,11 +1092,20 @@
               :key="idx"
             >
               <div
-                class="evidence-thumb"
                 v-if="isImageEvidence(item)"
+                class="evidence-thumb"
                 @click="previewUrl = item.url"
               >
                 <img :src="item.url" alt="Evidencia" title="Haz clic para previsualizar" />
+                <button
+                  type="button"
+                  class="btn-edit-thumb"
+                  title="Editar foto"
+                  @click.stop="openImageEditor(idx)"
+                >
+                  <Pencil :size="13" />
+                  <span>Editar</span>
+                </button>
                 <button type="button" class="btn-remove-thumb" @click.stop="removeEvidence(idx)">
                   &times;
                 </button>
@@ -1209,12 +1256,20 @@
     </form>
 
     <!-- Image Preview Modal -->
-    <div class="modal-overlay" v-if="previewUrl">
+    <div v-if="previewUrl" class="modal-overlay">
       <div class="modal-content-img" @click.stop>
         <button class="btn-close-modal" @click="previewUrl = null">&times;</button>
         <img :src="previewUrl" class="img-preview-full" alt="Vista previa detallada" />
       </div>
     </div>
+
+    <!-- Editor de fotos estilo WhatsApp Web -->
+    <EvidenceImageEditorModal
+      v-model="showImageEditor"
+      :image-src="editingImageSrc"
+      :file-name="editingImageName"
+      @save="onImageEdited"
+    />
   </div>
 </template>
 
@@ -1890,6 +1945,28 @@
   }
   .btn-remove-thumb:hover {
     background: rgba(220, 38, 38, 1);
+  }
+  .btn-edit-thumb {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    height: 24px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.85);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    transition: background 0.2s;
+    z-index: 10;
+  }
+  .btn-edit-thumb:hover {
+    background: #2563eb;
   }
   .evidence-doc {
     position: relative;

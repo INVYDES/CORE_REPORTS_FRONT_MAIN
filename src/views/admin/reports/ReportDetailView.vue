@@ -32,7 +32,8 @@
     type ReportExtraMeta,
   } from '../../../utils/reportMeta'
   import { toMysqlDatetime } from '../../../api/mapper'
-  import { Upload, Trash2, Plus } from 'lucide-vue-next'
+  import { Upload, Trash2, Plus, Pencil } from 'lucide-vue-next'
+  import EvidenceImageEditorModal from '../../../components/shared/EvidenceImageEditorModal.vue'
 
   // Pinia store
   import { useAuthStore } from '../../../stores/authStore'
@@ -408,6 +409,43 @@
       URL.revokeObjectURL(item.url)
     }
     editForm.evidenciaFotografica.splice(idx, 1)
+  }
+
+  const showEditImageEditor = ref(false)
+  const editingImageIndex = ref<number | null>(null)
+  const editingImageSrc = ref('')
+  const editingImageName = ref('')
+
+  const openEditImageEditor = (idx: number) => {
+    const item = editForm.evidenciaFotografica[idx]
+    if (!item || !item.url) return
+    editingImageIndex.value = idx
+    editingImageSrc.value = item.url
+    editingImageName.value = item.nombre || `evidencia-${idx + 1}.jpg`
+    showEditImageEditor.value = true
+  }
+
+  const onEditImageSaved = ({ file, blobUrl }: { file: File; blobUrl: string }) => {
+    const idx = editingImageIndex.value
+    if (idx === null) return
+    const item = editForm.evidenciaFotografica[idx]
+    if (!item) return
+    if (item.url && item.url.startsWith('blob:')) {
+      URL.revokeObjectURL(item.url)
+    }
+    item.url = blobUrl
+    item.nombre = file.name
+    item.tipoArchivo = file.type
+    if (item.isNew && item.fileIndex !== undefined) {
+      editNewFiles.value[item.fileIndex] = file
+    } else {
+      const fileIdx = editNewFiles.value.length
+      editNewFiles.value.push(file)
+      item.isNew = true
+      item.fileIndex = fileIdx
+      delete item.id
+    }
+    toast.success('Imagen editada lista para guardar')
   }
 
   const openEditModal = () => {
@@ -1744,7 +1782,7 @@
       <div v-if="showEditModal" class="modal-overlay">
         <div class="modal-content modal-content-wide">
           <header class="modal-header">
-            <h2>✏️ Editar Reporte Técnico ({{ report?.folio }})</h2>
+            <h2>Editar Reporte Técnico ({{ report?.folio }})</h2>
             <button class="btn-close" @click="showEditModal = false">&times;</button>
           </header>
           <div class="modal-body modal-body-scroll">
@@ -2034,10 +2072,20 @@
                       <span>{{ ev.nombre || 'Documento' }}</span>
                     </div>
                     <button
+                      v-if="isImageEvidence(ev)"
+                      type="button"
+                      class="btn-edit-ev"
+                      title="Editar foto"
+                      @click="openEditImageEditor(idx)"
+                    >
+                      <Pencil :size="13" />
+                      <span>Editar</span>
+                    </button>
+                    <button
                       type="button"
                       class="btn-delete-ev"
-                      @click="removeEditEvidence(idx)"
                       title="Eliminar evidencia"
+                      @click="removeEditEvidence(idx)"
                     >
                       &times;
                     </button>
@@ -2432,6 +2480,14 @@
 
       <p class="print-footer-note">Generado con coreReports® para {{ companyName }}</p>
     </div>
+
+    <!-- Editor de fotos estilo WhatsApp Web -->
+    <EvidenceImageEditorModal
+      v-model="showEditImageEditor"
+      :image-src="editingImageSrc"
+      :file-name="editingImageName"
+      @save="onEditImageSaved"
+    />
   </div>
 </template>
 
@@ -3183,6 +3239,29 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .btn-edit-ev {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    height: 24px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.85);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: #2563eb;
+    }
   }
 
   @media (max-width: 768px) {
