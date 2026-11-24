@@ -14,8 +14,10 @@ import {
   Check,
   Wrench,
   Loader2,
+  Pencil,
 } from 'lucide-vue-next'
 import client from '../../api/client'
+import EvidenceImageEditorModal from '../../components/shared/EvidenceImageEditorModal.vue'
 
 const route = useRoute()
 const slug = String(route.params.slug || '').trim()
@@ -121,6 +123,34 @@ const handleFileSelect = (e: Event) => {
 
 const removeEvidence = (index: number) => {
   form.evidencias.splice(index, 1)
+}
+
+const showPublicPhotoEditor = ref(false)
+const editingPublicPhotoIdx = ref<number | null>(null)
+const editingPublicPhotoSrc = ref('')
+
+const openPublicPhotoEditor = (index: number) => {
+  const src = form.evidencias[index]
+  if (!src) return
+  editingPublicPhotoIdx.value = index
+  editingPublicPhotoSrc.value = src
+  showPublicPhotoEditor.value = true
+}
+
+const onPublicPhotoEdited = ({ file, blobUrl }: { file: File; blobUrl: string }) => {
+  const idx = editingPublicPhotoIdx.value
+  if (idx === null) return
+  const reader = new FileReader()
+  reader.onload = evt => {
+    const b64 = evt.target?.result as string
+    if (b64) {
+      form.evidencias[idx] = b64
+    }
+    if (blobUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(blobUrl)
+    }
+  }
+  reader.readAsDataURL(file)
 }
 
 const submitTicket = async () => {
@@ -487,9 +517,18 @@ onMounted(() => {
                 <img :src="imgSrc" class="w-full h-full object-cover" alt="Evidencia" />
                 <button
                   type="button"
-                  @click="removeEvidence(idx)"
-                  class="absolute top-1 right-1 bg-red-600 hover:bg-red-700 text-white p-1 rounded-full shadow transition-all cursor-pointer"
+                  class="absolute top-1.5 left-1.5 bg-slate-900/85 hover:bg-blue-600 text-white px-2 py-1 rounded-md shadow text-[11px] font-semibold inline-flex items-center gap-1 transition-all cursor-pointer"
+                  title="Editar foto"
+                  @click="openPublicPhotoEditor(idx)"
+                >
+                  <Pencil :size="12" />
+                  <span>Editar</span>
+                </button>
+                <button
+                  type="button"
+                  class="absolute top-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white p-1 rounded-full shadow transition-all cursor-pointer"
                   title="Quitar foto"
+                  @click="removeEvidence(idx)"
                 >
                   <X :size="12" />
                 </button>
@@ -521,6 +560,12 @@ onMounted(() => {
         <span>Powered by CoreReports</span>
       </div>
 
+      <EvidenceImageEditorModal
+        v-model="showPublicPhotoEditor"
+        :image-src="editingPublicPhotoSrc"
+        :file-name="`evidencia-falla-${(editingPublicPhotoIdx ?? 0) + 1}.jpg`"
+        @save="onPublicPhotoEdited"
+      />
     </div>
   </div>
 </template>

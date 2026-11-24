@@ -107,6 +107,7 @@ export function mapTicketForBackend(front: any): BackendPayload {
     area_id: front.area_id ?? front.idSubdependencia ?? null,
     equipo_id: front.equipo_id ?? null,
     fecha_limite: front.fecha_limite ? toMysqlDatetime(front.fecha_limite) : null,
+    evidencias: Array.isArray(front.evidencias) && front.evidencias.length > 0 ? front.evidencias : undefined,
   }
   return clean(raw)
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
   import { ref, onMounted } from 'vue'
   import { useRouter } from 'vue-router'
-  import { Camera, X, ArrowLeft } from 'lucide-vue-next'
+  import { Camera, X, ArrowLeft, Pencil } from 'lucide-vue-next'
+  import EvidenceImageEditorModal from '../../../components/shared/EvidenceImageEditorModal.vue'
   const props = defineProps<{ isModal?: boolean }>()
   const emit = defineEmits<{ (e: 'close'): void; (e: 'created'): void }>()
   import { ticketsApi } from '../../../api/tickets'
@@ -66,20 +67,50 @@
   const photoPreview = ref<string | null>(null)
   const photoFile = ref<File | null>(null)
   const fileInput = ref<HTMLInputElement | null>(null)
+  const showPhotoEditor = ref(false)
 
   const handlePhotoSelect = (event: Event) => {
     const target = event.target as HTMLInputElement
     if (target.files && target.files[0]) {
       const file = target.files[0]
+      if (photoPreview.value && photoPreview.value.startsWith('blob:')) {
+        URL.revokeObjectURL(photoPreview.value)
+      }
       photoFile.value = file
       photoPreview.value = URL.createObjectURL(file)
     }
   }
 
   const clearPhoto = () => {
+    if (photoPreview.value && photoPreview.value.startsWith('blob:')) {
+      URL.revokeObjectURL(photoPreview.value)
+    }
     photoPreview.value = null
     photoFile.value = null
     if (fileInput.value) fileInput.value.value = ''
+  }
+
+  const openPhotoEditor = () => {
+    if (!photoPreview.value) return
+    showPhotoEditor.value = true
+  }
+
+  const onPhotoEdited = ({ file, blobUrl }: { file: File; blobUrl: string }) => {
+    if (photoPreview.value && photoPreview.value.startsWith('blob:')) {
+      URL.revokeObjectURL(photoPreview.value)
+    }
+    photoFile.value = file
+    photoPreview.value = blobUrl
+    toast.success('Imagen editada lista para enviar')
+  }
+
+  const fileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = evt => resolve(String(evt.target?.result || ''))
+      reader.onerror = err => reject(err)
+      reader.readAsDataURL(file)
+    })
   }
 
   const handleBack = () => {
@@ -113,6 +144,12 @@
           ? `Lugar / Sucursal: ${lugarManual}\n\n${descRaw}`
           : descRaw
 
+      const evidencias: string[] = []
+      if (photoFile.value) {
+        const b64 = await fileToDataUrl(photoFile.value)
+        if (b64) evidencias.push(b64)
+      }
+
       const payload: any = {
         area_id: esAreaManual.value ? null : formData.value.area_id,
         asunto: asuntoFinal,
@@ -120,6 +157,7 @@
         solicitante: formData.value.solicitante,
         cargo: formData.value.cargo,
         prioridad: formData.value.prioridad,
+        evidencias: evidencias.length > 0 ? evidencias : undefined,
       }
       const res = await ticketsApi.create(payload)
       toast.success(`Ticket ${res.folio} creado`)
@@ -317,12 +355,21 @@
           <div v-else class="preview-area">
             <div class="image-wrapper">
               <img :src="photoPreview" alt="Vista previa de la evidencia" />
+              <button
+                type="button"
+                class="btn-edit-photo"
+                title="Editar foto"
+                @click="openPhotoEditor"
+              >
+                <Pencil :size="14" />
+                <span>Editar</span>
+              </button>
               <!--Remove image button-->
               <button
                 type="button"
-                @click="clearPhoto"
                 class="btn-remove-photo"
                 title="Quitar foto"
+                @click="clearPhoto"
               >
                 <X :size="16" />
               </button>
@@ -334,7 +381,7 @@
 
         <!-- Actions -->
         <div class="form-actions">
-          <button type="button" @click="handleBack" class="btn-cancelar">
+          <button type="button" class="btn-cancelar" @click="handleBack">
             <ArrowLeft :size="18" style="margin-right: 8px" />
             Regresar
           </button>
@@ -344,6 +391,13 @@
         </div>
       </form>
     </div>
+
+    <EvidenceImageEditorModal
+      v-model="showPhotoEditor"
+      :image-src="photoPreview || ''"
+      :file-name="photoFile?.name || 'evidencia-ticket.jpg'"
+      @save="onPhotoEdited"
+    />
   </div>
 </template>
 <!-------------------------------------------------------------------------------------------------->
@@ -583,6 +637,29 @@
 
     &:hover {
       background: rgba(239, 68, 68, 0.9);
+    }
+  }
+
+  .btn-edit-photo {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    height: 30px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.85);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 10px;
+    transition: background 0.2s;
+
+    &:hover {
+      background: #2563eb;
     }
   }
 
