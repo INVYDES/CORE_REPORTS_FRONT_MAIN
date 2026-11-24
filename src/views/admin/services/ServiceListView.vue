@@ -98,8 +98,8 @@
     return (
       !service.asignadoA ||
       service.asignadoA.trim() === '' ||
-      !service.usuarioAsignadoId ||
-      service.estatus === 'Sin Asignar'
+      !(service as any).usuarioAsignadoId ||
+      String(service.estatus) === 'Sin Asignar'
     )
   }
 

@@ -140,7 +140,7 @@
         unpacked.meta.falla ||
         unpacked.meta.fallaLibre ||
         (origen?.descripcion
-          ? (String(origen.descripcion).match(/[📋]?\s*Descripción de la Falla:\s*([\s\S]*?)(?=\n\n[📷]?\s*Evidencias|\n\n--|$)/i)?.[1] || '').trim() ||
+          ? (String(origen.descripcion).match(/(?:📋)?\s*Descripción de la Falla:\s*([\s\S]*?)(?=\n\n(?:📷)?\s*Evidencias|\n\n--|$)/iu)?.[1] || '').trim() ||
             origen?.asunto
           : origen?.asunto) ||
         undefined,
@@ -591,7 +591,7 @@
         window.print();
       }, 500);
     };
-  <\/script>
+  </` + `script>
 </body>
 </html>`)
     printWindow.document.close()
@@ -645,7 +645,6 @@
     const tecEmail = tecUser?.email || empresa.value?.email || '—'
 
     const origFolio = orig.folio || '0000'
-    const origFecha = formatDateShort(r.fechaElaboracion || r.fechaHoraInicio)
     const origArea = areaName.value || 'Área General'
     const origRespArea = displayResponsableNombre.value || '—'
 
@@ -951,6 +950,7 @@
 
         for (let i = 0; i < blocks.length; i++) {
           const block = blocks[i]
+          if (!block) continue
 
           // Si el bloque cruza el límite de corte de la hoja
           if (block.top < idealSplitDomY && block.bottom > idealSplitDomY) {
@@ -958,8 +958,9 @@
               splitDomY = block.top
 
               // Si el elemento inmediatamente anterior es un título de sección, no dejarlo huérfano
-              if (i > 0 && blocks[i - 1].isTitle && blocks[i - 1].top > currentDomY + 40) {
-                splitDomY = blocks[i - 1].top
+              const prevBlock = i > 0 ? blocks[i - 1] : undefined
+              if (prevBlock && prevBlock.isTitle && prevBlock.top > currentDomY + 40) {
+                splitDomY = prevBlock.top
               }
             }
             break
@@ -1005,7 +1006,9 @@
       const totalPages = pageBreaks.length
 
       for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
-        const { top: sliceTopDom, bottom: sliceBottomDom } = pageBreaks[pageIdx]
+        const pageBreak = pageBreaks[pageIdx]
+        if (!pageBreak) continue
+        const { top: sliceTopDom, bottom: sliceBottomDom } = pageBreak
         const sliceTopCanvas = Math.round(sliceTopDom * canvasScale)
         const sliceBottomCanvas = Math.min(canvas.height, Math.round(sliceBottomDom * canvasScale))
         const sliceHCanvas = sliceBottomCanvas - sliceTopCanvas
@@ -1147,6 +1150,7 @@
       isExporting.value = false
     }
   }
+  void exportExcel
 
   // === Modal de Envío de Reporte por Correo ===
   // Control para mostrar u ocultar la funcionalidad de envío por correo

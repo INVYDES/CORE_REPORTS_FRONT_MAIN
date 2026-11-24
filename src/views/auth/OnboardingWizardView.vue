@@ -64,7 +64,9 @@
         password: adminTecnico.value.password,
         rol: 'Administrador Técnico',
       })
-      for (const tech of pendientes) {
+      for (let i = 0; i < pendientes.length; i++) {
+        const tech = pendientes[i]
+        if (!tech) continue
         const password = generarPassword()
         await client.post('/usuarios', {
           nombre: tech.nombre,

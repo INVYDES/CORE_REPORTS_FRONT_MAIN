@@ -223,13 +223,12 @@
 
   const formatTicketSummary = (desc: string) => {
     if (!desc) return { text: '—', hasPhoto: false }
-    const hasPhoto = /(https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp|gif)|📷\s*Evidencias|Evidencias Fotográficas)/i.test(desc)
+    const hasPhoto = /(https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp|gif)|📷\s*Evidencias|Evidencias Fotográficas)/iu.test(desc)
     let clean = desc
-      .replace(/[📷]?\s*Evidencias Fotográficas Adjuntas:[\s\S]*$/i, '')
+      .replace(/(?:📷)?\s*Evidencias Fotográficas Adjuntas:[\s\S]*$/iu, '')
       .replace(/-?\s*Foto\s*\d+:?\s*https?:\/\/[^\s]+/gi, '')
       .replace(/(https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s"'<>]*)?)/gi, '')
-      .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-      .replace(/[🏢👤📞✉️📋📷📌📍📎🏷️🔍⚡⚠️✅❌]/gu, '')
+      .replace(/(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|\u{FE0F})/gu, '')
       .replace(/^[ \t]+/gm, '')
       .trim()
     if (clean.length > 130) {

@@ -17,7 +17,7 @@
   import client from '../../../api/client'
   import { calcNetHoursText } from '../../../utils/reportMeta'
   import { useToast } from 'vue-toastification'
-  import { Image as ImageIcon, Upload, Camera, FileText, Mail, Plus, X, Send } from 'lucide-vue-next'
+  import { Image as ImageIcon, Upload, Camera, FileText, Mail, Plus, X } from 'lucide-vue-next'
   const toast = useToast()
 
   const props = defineProps<{ isModal?: boolean }>()
@@ -161,8 +161,8 @@
     if (!formData.fallaReportada.trim()) {
       if (tipo === 'Ticket') {
         const desc = String(item.descripcion || '')
-        const matchFalla = desc.match(/[📋]?\s*Descripción de la Falla:\s*([\s\S]*?)(?=\n\n[📷]?\s*Evidencias|\n\n--|$)/i)
-        if (matchFalla && matchFalla[1].trim()) {
+        const matchFalla = desc.match(/(?:📋)?\s*Descripción de la Falla:\s*([\s\S]*?)(?=\n\n(?:📷)?\s*Evidencias|\n\n--|$)/iu)
+        if (matchFalla && matchFalla[1]?.trim()) {
           formData.fallaReportada = matchFalla[1].trim()
         } else if (item.asunto) {
           formData.fallaReportada = String(item.asunto).replace(/^\[[^\]]+\]\s*/, '')
@@ -264,21 +264,6 @@
   const availableTicketsReal = ref<any[]>([])
   const availableServicesReal = ref<any[]>([])
   const availableTechniciansReal = ref<any[]>([])
-
-  const getAsuntoFallback = (tipo: string, id: number) => {
-    if (tipo === 'Ticket') {
-      const r = availableTicketsReal.value.find((t: any) => Number(t.id) === Number(id))
-      return r ? r.asunto : 'Ticket no encontrado'
-    } else {
-      const r = availableServicesReal.value.find((s: any) => Number(s.id) === Number(id))
-      return r ? r.asunto : 'Servicio no encontrado'
-    }
-  }
-
-  const asuntoOrigen = computed(() => {
-    if (!formData.origenDatosId) return 'Seleccione un origen de datos...'
-    return getAsuntoFallback(formData.tipoReporte, formData.origenDatosId)
-  })
 
   const ROLE_TO_CARGO: Record<number, string> = {
     0: 'Default',

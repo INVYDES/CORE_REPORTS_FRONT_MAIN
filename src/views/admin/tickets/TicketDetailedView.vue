@@ -54,22 +54,21 @@
   // 3. Evidencias fotográficas adjuntas en la descripción
   const activeLightbox = ref<string | null>(null)
 
-  const parsedDescription = computed(() => {
-    const raw = ticket.value?.descripcion || ''
+  const parsedDescription = computed((): { cleanText: string; images: string[] } => {
+    const raw = String(ticket.value?.descripcion || '')
     if (!raw) return { cleanText: '', images: [] as string[] }
 
     // Detectar URLs directas de imágenes (jpg, jpeg, png, webp, gif)
     const urlRegex = /(https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s"'<>]*)?)/gi
-    const matches = raw.match(urlRegex) || []
-    const images = Array.from(new Set(matches))
+    const matches: string[] = raw.match(urlRegex) || []
+    const images: string[] = Array.from(new Set<string>(matches))
 
     // Limpiar el texto: quitar bloque de evidencias fotográficas para que no se vea como texto feo y remover emojis
     let cleanText = raw
-      .replace(/[📷]?\s*Evidencias Fotográficas Adjuntas:[\s\S]*$/i, '')
+      .replace(/(?:📷)?\s*Evidencias Fotográficas Adjuntas:[\s\S]*$/iu, '')
       .replace(/-?\s*Foto\s*\d+:?\s*https?:\/\/[^\s]+/gi, '')
       .replace(/(https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp|gif)(?:\?[^\s"'<>]*)?)/gi, '')
-      .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-      .replace(/[🏢👤📞✉️📋📷📌📍📎🏷️🔍⚡⚠️✅❌]/gu, '')
+      .replace(/(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|\u{FE0F})/gu, '')
       .replace(/^[ \t]+/gm, '')
       .trim()
 
@@ -99,8 +98,7 @@
       descripcion: raw.descripcion || '',
       solicitante: raw.solicitante || '—',
       cargo: (raw.cargo || '')
-        .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-        .replace(/[🏢👤📞✉️📋📷📌📍📎🏷️🔍⚡⚠️✅❌]/gu, '')
+        .replace(/(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|\u{FE0F})/gu, '')
         .trim(),
       estatus: hasFinalizadoReport ? 'Resuelto' : statusLabel(raw.estatus),
       prioridad: priorityLabel(raw.prioridad),

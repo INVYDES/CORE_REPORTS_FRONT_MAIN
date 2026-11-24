@@ -7,7 +7,6 @@ import {
   Phone,
   Mail,
   AlertCircle,
-  FileText,
   Camera,
   X,
   CheckCircle2,
