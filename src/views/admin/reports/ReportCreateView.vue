@@ -580,7 +580,7 @@
           <div class="form-group">
             <label>Número de reporte</label>
             <input type="text" value="Generado al guardar..." disabled class="input-disabled" />
-            <span class="format-hint">Formato autogenerado: REP-2026-001</span>
+            <span class="format-hint">Formato autogenerado: REP-26-001</span>
           </div>
         </div>
 
@@ -619,7 +619,7 @@
               </template>
             </select>
             <span class="format-hint"
-              >Formato: selecciona el folio origen (ej. TKT-2026-004) — al cerrar se actualiza a
+              >Formato: selecciona el folio origen (ej. TKT-26-004) — al cerrar se actualiza a
               Resuelto/Realizado</span
             >
           </div>

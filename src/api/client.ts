@@ -36,8 +36,35 @@ function forzarLogout(): void {
   window.dispatchEvent(new CustomEvent('auth:expirado'))
 }
 
+function normalizeFoliosInPayload(val: any): any {
+  if (typeof val === 'string') {
+    return val.replace(/\b(TKT|REP|SRV)-20(\d{2}\d*-)/gi, '$1-$2')
+  }
+  if (Array.isArray(val)) {
+    return val.map(normalizeFoliosInPayload)
+  }
+  if (
+    val !== null &&
+    typeof val === 'object' &&
+    !(val instanceof Blob) &&
+    !(val instanceof ArrayBuffer)
+  ) {
+    const out: Record<string, any> = {}
+    for (const k of Object.keys(val)) {
+      out[k] = normalizeFoliosInPayload(val[k])
+    }
+    return out
+  }
+  return val
+}
+
 client.interceptors.response.use(
-  r => r,
+  r => {
+    if (r?.data) {
+      r.data = normalizeFoliosInPayload(r.data)
+    }
+    return r
+  },
   async error => {
     const status = error.response?.status
     if (status === 419) {
