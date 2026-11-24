@@ -143,9 +143,15 @@
       formData.areaTexto = ''
     } else {
       const desc = String(item.descripcion || '')
-      const matchLugarDesc = desc.match(/🏢 Lugar \/ Sucursal:\s*([^\n\r]+)/i)
+      const matchLugarDesc = desc.match(/(?:🏢)?\s*Lugar \/ Sucursal:\s*([^\n\r]+)/iu)
       const matchLugarCargo = String(item.cargo || '').match(/Lugar:\s*([^|]+)/i)
-      const lugarDetectado = (matchLugarDesc?.[1] || matchLugarCargo?.[1] || '').trim()
+      const matchAsuntoBracket = String(item.asunto || '').match(/^\[([^\]]+)\]/)
+      const lugarDetectado = (
+        matchLugarDesc?.[1] ||
+        matchLugarCargo?.[1] ||
+        matchAsuntoBracket?.[1] ||
+        ''
+      ).trim()
       if (lugarDetectado) {
         esAreaManual.value = true
         formData.areaTexto = lugarDetectado
@@ -175,8 +181,13 @@
         const matchFalla = desc.match(/(?:📋)?\s*Descripción de la Falla:\s*([\s\S]*?)(?=\n\n(?:📷)?\s*Evidencias|\n\n--|$)/iu)
         if (matchFalla && matchFalla[1]?.trim()) {
           formData.fallaReportada = matchFalla[1].trim()
-        } else if (item.asunto) {
-          formData.fallaReportada = String(item.asunto).replace(/^\[[^\]]+\]\s*/, '')
+        } else {
+          const descSinLugar = desc.replace(/^(?:🏢)?\s*Lugar \/ Sucursal:\s*[^\n\r]+\s*/iu, '').trim()
+          if (descSinLugar && !descSinLugar.includes('Evidencias Fotográficas')) {
+            formData.fallaReportada = descSinLugar
+          } else if (item.asunto) {
+            formData.fallaReportada = String(item.asunto).replace(/^\[[^\]]+\]\s*/, '')
+          }
         }
       } else if (tipo === 'Servicio Programado') {
         formData.fallaReportada = String(item.asunto || item.descripcion || '')

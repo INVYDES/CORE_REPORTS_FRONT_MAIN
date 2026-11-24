@@ -37,8 +37,10 @@
   })
 
   const isSubmitting = ref(false)
+  const esAreaManual = ref(false)
   const formData = ref({
     area_id: null as number | null,
+    area_texto: '',
     solicitante: auth.currentUser?.nombre
       ? `${auth.currentUser.nombre} ${auth.currentUser.apellidos || ''}`.trim()
       : '',
@@ -51,6 +53,15 @@
     prioridad: 'Media',
     descripcion: '',
   })
+
+  const toggleAreaModo = () => {
+    esAreaManual.value = !esAreaManual.value
+    if (!esAreaManual.value) {
+      formData.value.area_texto = ''
+    } else {
+      formData.value.area_id = null
+    }
+  }
 
   const photoPreview = ref<string | null>(null)
   const photoFile = ref<File | null>(null)
@@ -79,12 +90,33 @@
 
   const submitTicket = async () => {
     if (isSubmitting.value) return
+    const lugarManual = formData.value.area_texto.trim()
+    if (esAreaManual.value && !lugarManual) {
+      toast.warning('Escribe el nombre del área o ubicación externa')
+      return
+    }
+    if (!esAreaManual.value && !formData.value.area_id) {
+      toast.warning('Selecciona un área o subdependencia')
+      return
+    }
+
     isSubmitting.value = true
     try {
+      const asuntoRaw = formData.value.asunto.trim()
+      const asuntoFinal =
+        esAreaManual.value && lugarManual && !asuntoRaw.startsWith('[')
+          ? `[${lugarManual}] ${asuntoRaw}`
+          : asuntoRaw
+      const descRaw = formData.value.descripcion.trim()
+      const descripcionFinal =
+        esAreaManual.value && lugarManual
+          ? `Lugar / Sucursal: ${lugarManual}\n\n${descRaw}`
+          : descRaw
+
       const payload: any = {
-        area_id: formData.value.area_id,
-        asunto: formData.value.asunto,
-        descripcion: formData.value.descripcion,
+        area_id: esAreaManual.value ? null : formData.value.area_id,
+        asunto: asuntoFinal,
+        descripcion: descripcionFinal,
         solicitante: formData.value.solicitante,
         cargo: formData.value.cargo,
         prioridad: formData.value.prioridad,
@@ -145,13 +177,37 @@
         <div class="form-grid">
           <!-- Área / Subdependencia -->
           <div class="form-group">
-            <label>Área / Subdependencia *</label>
-            <select v-model="formData.area_id" required class="fat-input">
+            <div class="area-label-row">
+              <label style="margin: 0">Área / Subdependencia *</label>
+              <button
+                type="button"
+                class="btn-toggle-area"
+                @click="toggleAreaModo"
+              >
+                {{ esAreaManual ? '← Seleccionar de lista' : '+ Otra / Ubicación externa' }}
+              </button>
+            </div>
+            <input
+              v-if="esAreaManual"
+              v-model="formData.area_texto"
+              type="text"
+              required
+              placeholder="Ej. Tienda de conveniencia / Sucursal Aeropuerto"
+              class="fat-input"
+            />
+            <select v-else v-model="formData.area_id" required class="fat-input">
               <option :value="null" disabled>Selecciona un área...</option>
               <option v-for="area in availableAreas" :key="area.id" :value="area.id">
                 {{ area.nombre }}
               </option>
             </select>
+            <span class="area-format-hint">
+              {{
+                esAreaManual
+                  ? 'Ubicación o sucursal externa (manual)'
+                  : 'Área o dependencia registrada en sistema'
+              }}
+            </span>
           </div>
 
           <!-- Applicant-->
@@ -348,6 +404,36 @@
       font-weight: 600;
       color: #475569;
     }
+  }
+
+  .area-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .btn-toggle-area {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #2563eb;
+    text-decoration: underline;
+    cursor: pointer;
+
+    &:hover {
+      color: #1e40af;
+    }
+  }
+
+  .area-format-hint {
+    font-size: 0.76rem;
+    color: #94a3b8;
+    font-style: italic;
+    border-left: 2px solid #cbd5e1;
+    padding-left: 0.5rem;
   }
 
   .fat-input {
