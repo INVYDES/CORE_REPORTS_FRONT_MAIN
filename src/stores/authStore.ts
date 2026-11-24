@@ -15,6 +15,20 @@ export interface UsuarioReal {
   dependencia?: any
 }
 
+export interface VerificacionPendiente {
+  requiere_verificacion: true
+  email: string
+  correo_enviado: boolean
+  reenviar_en_segundos: number
+  expira_en?: string | null
+  message: string
+}
+
+export type LoginResponse = UsuarioReal | VerificacionPendiente
+
+export const esVerificacionPendiente = (respuesta: LoginResponse): respuesta is VerificacionPendiente =>
+  'requiere_verificacion' in respuesta
+
 /** Roles del dominio (espejo del enum RolUsuario del backend). */
 export const ROLES = {
   CLIENTE: 0,
@@ -81,10 +95,59 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<LoginResponse> => {
     const { data } = await client.post('/login', { email, password })
+
+    if (data.requiere_verificacion) {
+      return {
+        requiere_verificacion: true,
+        email: data.email,
+        correo_enviado: Boolean(data.correo_enviado),
+        reenviar_en_segundos: Number(data.reenviar_en_segundos || 0),
+        expira_en: data.expira_en,
+        message: data.message,
+      }
+    }
+
     applySession(data.user, data.token)
     return data.user as UsuarioReal
+  }
+
+  const verificarCodigo = async (email: string, codigo: string) => {
+    const { data } = await client.post('/auth/verificar-codigo', { email, codigo })
+    applySession(data.user, data.token)
+    return data.user as UsuarioReal
+  }
+
+  const verificarEnlace = async (token: string) => {
+    const { data } = await client.post('/auth/verificar-enlace', { token })
+    applySession(data.user, data.token)
+    return data.user as UsuarioReal
+  }
+
+  const reenviarVerificacion = async (email: string) => {
+    const { data } = await client.post('/auth/reenviar-verificacion', { email })
+    return data as {
+      message: string
+      correo_enviado: boolean
+      reenviar_en_segundos?: number
+      expira_en?: string | null
+    }
+  }
+
+  const olvidePassword = async (email: string) => {
+    const { data } = await client.post('/auth/olvide-password', { email })
+    return data as { message: string }
+  }
+
+  const resetPassword = async (payload: {
+    email: string
+    token: string
+    password: string
+    password_confirmation: string
+  }) => {
+    const { data } = await client.post('/auth/reset-password', payload)
+    return data as { message: string }
   }
 
   /**
@@ -144,6 +207,11 @@ export const useAuthStore = defineStore('auth', () => {
     isSuperAdmin,
     isLicenciaVencida,
     login,
+    verificarCodigo,
+    verificarEnlace,
+    reenviarVerificacion,
+    olvidePassword,
+    resetPassword,
     logout,
     fetchMe,
     changeUser,

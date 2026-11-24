@@ -70,7 +70,12 @@
 
     comprando.value = plan.codigo
     try {
-      const { data } = await client.post(`/licencias/${licencia.id}/comprar-mercadopago`)
+      // Preferir el token opaco del plan; el endpoint por id queda como respaldo.
+      const { data } = licencia.token
+        ? await client.post('/licencias/comprar-mercadopago', {
+            licenciaToken: licencia.token,
+          })
+        : await client.post(`/licencias/${licencia.id}/comprar-mercadopago`)
       if (data.init_point) {
         window.location.href = data.init_point
         return

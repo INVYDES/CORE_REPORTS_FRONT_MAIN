@@ -37,6 +37,23 @@ const router = createRouter({
           meta: { guestOnly: true },
         },
         {
+          path: 'forgot-password',
+          name: 'forgot-password',
+          component: () => import('../views/auth/ForgotPasswordView.vue'),
+          meta: { guestOnly: true },
+        },
+        {
+          path: 'reset-password',
+          name: 'reset-password',
+          component: () => import('../views/auth/ResetPasswordView.vue'),
+          meta: { guestOnly: true },
+        },
+        {
+          path: 'verificar-correo',
+          name: 'verify-email',
+          component: () => import('../views/auth/VerifyEmailView.vue'),
+        },
+        {
           path: 'onboarding',
           name: 'onboarding',
           component: () => import('../views/auth/OnboardingWizardView.vue'),

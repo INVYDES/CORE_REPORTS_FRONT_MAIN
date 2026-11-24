@@ -234,8 +234,23 @@
         lastNamePaternal: formData.lastNamePaternal,
         lastNameMaternal: formData.lastNameMaternal,
         phone: formData.phone,
+        // Token opaco del plan: lo emite el backend y tiene vigencia corta.
+        licenciaToken: selectedPlan.value?.token || undefined,
         licenciaId: selectedLicencia.value,
       })
+
+      if (data.requiere_verificacion) {
+        toast.info('Cuenta creada. Verifica tu correo para activar el acceso.')
+        router.push({
+          name: 'login',
+          query: {
+            email: data.user?.email || formData.email,
+            verificar: '1',
+            enviado: data.correo_enviado === false ? '0' : '1',
+          },
+        })
+        return
+      }
 
       if (data.token && data.user) {
         useAuthStore().applySession(data.user, data.token)
@@ -270,7 +285,9 @@
 
     isLoading.value = true
     try {
-      const res = await client.post(`/licencias/${licencia.id}/comprar-mercadopago`)
+      const res = licencia.token
+        ? await client.post('/licencias/comprar-mercadopago', { licenciaToken: licencia.token })
+        : await client.post(`/licencias/${licencia.id}/comprar-mercadopago`)
       const initPoint = res.data.init_point || res.data.initPoint
       if (initPoint) {
         toast.success('Redirigiendo a Mercado Pago...')
