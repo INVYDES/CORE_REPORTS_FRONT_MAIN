@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, onMounted, reactive, computed } from 'vue'
+  import { ref, onMounted, reactive, computed, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { useToast } from 'vue-toastification'
   import {
@@ -28,6 +28,7 @@
     parseLocalDate,
     toInputDatetimeLocal,
     calcNetHoursText,
+    calcDragHoursText,
     type ReportExtraMeta,
   } from '../../../utils/reportMeta'
   import { toMysqlDatetime } from '../../../api/mapper'
@@ -133,6 +134,10 @@
       fechaElaboracion: raw.fecha_inicio,
       fechaHoraInicio: raw.fecha_inicio,
       fechaHoraFin: raw.fecha_fin,
+      esEnTercero:
+        typeof unpacked.meta.esEnTercero === 'boolean'
+          ? unpacked.meta.esEnTercero
+          : Boolean(raw.hora_salida || raw.hora_llegada || raw.hora_regreso),
       horaSalidaBase: raw.hora_salida,
       horaLlegadaSitio: raw.hora_llegada,
       horaRegresoABase: raw.hora_regreso,
@@ -288,6 +293,7 @@
   const editForm = reactive({
     categoria: 'Mantenimiento Correctivo',
     esRetrabajo: false,
+    esEnTercero: false,
     idSubdependencia: null as number | null,
     responsableTexto: '',
     cargoTexto: '',
@@ -315,6 +321,27 @@
 
   const editTotalHours = computed(() =>
     calcNetHoursText(editForm.fechaHoraInicio, editForm.fechaHoraFin)
+  )
+
+  const editDragHours = computed(() => {
+    if (!editForm.esEnTercero) return '0h 0m'
+    return calcDragHoursText(
+      editForm.horaSalidaBase,
+      editForm.horaLlegadaSitio,
+      editForm.fechaHoraFin,
+      editForm.horaRegresoABase
+    )
+  })
+
+  watch(
+    () => editForm.esEnTercero,
+    val => {
+      if (!val) {
+        editForm.horaSalidaBase = ''
+        editForm.horaLlegadaSitio = ''
+        editForm.horaRegresoABase = ''
+      }
+    }
   )
 
   const addEditEjecutor = () => {
@@ -397,11 +424,18 @@
     editForm.ejecutoresIds = Array.isArray(report.value.ejecutoresIds)
       ? [...report.value.ejecutoresIds]
       : []
-    editForm.horaSalidaBase = toInputDatetimeLocal(report.value.horaSalidaBase)
-    editForm.horaLlegadaSitio = toInputDatetimeLocal(report.value.horaLlegadaSitio)
+    editForm.esEnTercero = !!report.value.esEnTercero
+    editForm.horaSalidaBase = report.value.esEnTercero
+      ? toInputDatetimeLocal(report.value.horaSalidaBase)
+      : ''
+    editForm.horaLlegadaSitio = report.value.esEnTercero
+      ? toInputDatetimeLocal(report.value.horaLlegadaSitio)
+      : ''
     editForm.fechaHoraInicio = toInputDatetimeLocal(report.value.fechaHoraInicio)
     editForm.fechaHoraFin = toInputDatetimeLocal(report.value.fechaHoraFin)
-    editForm.horaRegresoABase = toInputDatetimeLocal(report.value.horaRegresoABase)
+    editForm.horaRegresoABase = report.value.esEnTercero
+      ? toInputDatetimeLocal(report.value.horaRegresoABase)
+      : ''
     editForm.fallaReportada = report.value.fallaReportada || ''
     editForm.desarrolloActividades = report.value.desarrolloActividades || ''
     editForm.conclusionTrabajo = report.value.conclusionTrabajo || ''
@@ -438,8 +472,8 @@
         } as any
       )[editForm.estatusReporte] || 'parcial'
 
-    if (rawEstatus === 'finalizado' && !editForm.horaRegresoABase) {
-      toast.error('La hora de regreso a base es obligatoria al cerrar (finalizar) el reporte.')
+    if (editForm.esEnTercero && rawEstatus === 'finalizado' && !editForm.horaRegresoABase) {
+      toast.error('La hora de regreso a base es obligatoria al cerrar (finalizar) en instalaciones de un tercero.')
       return
     }
 
@@ -472,6 +506,7 @@
       conclusion: String(editForm.conclusionTrabajo || '').trim() || undefined,
       responsable: String(editForm.responsableTexto || '').trim() || undefined,
       cargo: String(editForm.cargoTexto || '').trim() || undefined,
+      esEnTercero: !!editForm.esEnTercero,
       fallaLibre:
         report.value.tipoReporte === 'Libre'
           ? String(editForm.fallaReportada || '').trim() || undefined
@@ -502,14 +537,14 @@
       }
       const fInicio = toMysqlDatetime(editForm.fechaHoraInicio)
       const fFin = toMysqlDatetime(editForm.fechaHoraFin)
-      const hSalida = toMysqlDatetime(editForm.horaSalidaBase)
-      const hLlegada = toMysqlDatetime(editForm.horaLlegadaSitio)
-      const hRegreso = toMysqlDatetime(editForm.horaRegresoABase)
+      const hSalida = editForm.esEnTercero ? toMysqlDatetime(editForm.horaSalidaBase) : null
+      const hLlegada = editForm.esEnTercero ? toMysqlDatetime(editForm.horaLlegadaSitio) : null
+      const hRegreso = editForm.esEnTercero ? toMysqlDatetime(editForm.horaRegresoABase) : null
       if (fInicio) fd.append('fecha_inicio', fInicio)
       if (fFin) fd.append('fecha_fin', fFin)
-      if (hSalida) fd.append('hora_salida', hSalida)
-      if (hLlegada) fd.append('hora_llegada', hLlegada)
-      if (hRegreso) fd.append('hora_regreso', hRegreso)
+      fd.append('hora_salida', hSalida || '')
+      fd.append('hora_llegada', hLlegada || '')
+      fd.append('hora_regreso', hRegreso || '')
       fd.append('desarrollo', packedDesarrollo)
 
       fd.append('sync_ejecutores', '1')
@@ -802,12 +837,29 @@
   </div>
 
   <!-- TIEMPOS -->
-  <div class="pdf-item" style="font-family:Arial,sans-serif;font-size:9pt;margin-top:8px;margin-bottom:12px;color:#000000;page-break-inside:avoid;break-inside:avoid;">
-    <strong style="font-weight:bold;">Tiempos:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-    Inicio: ${esc(formatTimeOnly(r.fechaHoraInicio))} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-    Fin: ${esc(formatTimeOnly(r.fechaHoraFin))} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-    Total: ${esc(totalHours.value)}
-  </div>
+  ${
+    r.esEnTercero
+      ? `<div class="pdf-item" style="font-family:Arial,sans-serif;font-size:9pt;margin-top:8px;margin-bottom:12px;color:#000000;page-break-inside:avoid;break-inside:avoid;line-height:1.6;">
+           <div>
+             <strong style="font-weight:bold;">Tiempos:</strong> &nbsp;&nbsp;&nbsp;&nbsp;
+             Salida Base: ${esc(formatTimeOnly(r.horaSalidaBase))} &nbsp;&nbsp;&nbsp;&nbsp;
+             Llegada a Sitio: ${esc(formatTimeOnly(r.horaLlegadaSitio))} &nbsp;&nbsp;&nbsp;&nbsp;
+             Inicio: ${esc(formatTimeOnly(r.fechaHoraInicio))} &nbsp;&nbsp;&nbsp;&nbsp;
+             Fin: ${esc(formatTimeOnly(r.fechaHoraFin))} &nbsp;&nbsp;&nbsp;&nbsp;
+             Regreso a Base: ${esc(formatTimeOnly(r.horaRegresoABase))}
+           </div>
+           <div>
+             <strong style="font-weight:bold;">Trabajo Neto:</strong> ${esc(totalHours.value)} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+             <strong style="font-weight:bold;">Tiempo de Arrastre:</strong> ${esc(dragHours.value)}
+           </div>
+         </div>`
+      : `<div class="pdf-item" style="font-family:Arial,sans-serif;font-size:9pt;margin-top:8px;margin-bottom:12px;color:#000000;page-break-inside:avoid;break-inside:avoid;">
+           <strong style="font-weight:bold;">Tiempos:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+           Inicio: ${esc(formatTimeOnly(r.fechaHoraInicio))} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+           Fin: ${esc(formatTimeOnly(r.fechaHoraFin))} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+           Total: ${esc(totalHours.value)}
+         </div>`
+  }
 
   <!-- MATERIALES -->
   ${
@@ -1327,6 +1379,16 @@
     return calcNetHoursText(report.value.fechaHoraInicio, report.value.fechaHoraFin)
   })
 
+  const dragHours = computed(() => {
+    if (!report.value || !report.value.esEnTercero) return '0h 0m'
+    return calcDragHoursText(
+      report.value.horaSalidaBase,
+      report.value.horaLlegadaSitio,
+      report.value.fechaHoraFin,
+      report.value.horaRegresoABase
+    )
+  })
+
   const areaName = computed(() => {
     if (!report.value) return '---'
     if (report.value.idSubdependencia === undefined || report.value.idSubdependencia === null) {
@@ -1616,7 +1678,7 @@
                     }}</span
                   >
                 </div>
-                <div class="date-info mt-2" v-if="report.horaSalidaBase">
+                <div v-if="report.esEnTercero && report.horaSalidaBase" class="date-info mt-2">
                   <Clock :size="16" class="icon" />
                   <span
                     ><strong>Salida Base:</strong> <br />{{
@@ -1624,7 +1686,7 @@
                     }}</span
                   >
                 </div>
-                <div class="date-info mt-2" v-if="report.horaLlegadaSitio">
+                <div v-if="report.esEnTercero && report.horaLlegadaSitio" class="date-info mt-2">
                   <Clock :size="16" class="icon" />
                   <span
                     ><strong>Llegada a Sitio:</strong> <br />{{
@@ -1640,13 +1702,13 @@
                     }}</span
                   >
                 </div>
-                <div class="date-info mt-2" v-if="report.fechaHoraFin">
+                <div v-if="report.fechaHoraFin" class="date-info mt-2">
                   <Clock :size="16" class="icon" />
                   <span
                     ><strong>Fin Trabajo:</strong> <br />{{ formatDate(report.fechaHoraFin) }}</span
                   >
                 </div>
-                <div class="date-info mt-2" v-if="report.horaRegresoABase">
+                <div v-if="report.esEnTercero && report.horaRegresoABase" class="date-info mt-2">
                   <Clock :size="16" class="icon" />
                   <span
                     ><strong>Regreso a Base:</strong> <br />{{
@@ -1658,6 +1720,12 @@
                   <Clock :size="16" class="icon" />
                   <span
                     ><strong>Horas de trabajo neto:</strong> <br />{{ totalHours }}</span
+                  >
+                </div>
+                <div v-if="report.esEnTercero" class="date-info mt-2">
+                  <Clock :size="16" class="icon" />
+                  <span
+                    ><strong>Tiempo de arrastre:</strong> <br />{{ dragHours }}</span
                   >
                 </div>
               </div>
@@ -1792,50 +1860,68 @@
             <!-- Sección 4: Generales y Tiempos -->
             <div class="edit-section">
               <h3 class="edit-section-title">Sección 4 — Generales y Tiempos</h3>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px">
+                <input
+                  id="editEsEnTercero"
+                  v-model="editForm.esEnTercero"
+                  type="checkbox"
+                  style="width: 16px; height: 16px; cursor: pointer"
+                />
+                <label
+                  for="editEsEnTercero"
+                  style="margin: 0; font-weight: 500; cursor: pointer; color: #334155"
+                >
+                  ¿Las actividades son en instalaciones del cliente o un tercero?
+                </label>
+              </div>
               <div class="grid-3-cols">
-                <div class="form-group">
+                <div v-if="editForm.esEnTercero" class="form-group">
                   <label>Hora de salida base</label>
                   <input
-                    type="datetime-local"
                     v-model="editForm.horaSalidaBase"
+                    type="datetime-local"
                     class="form-control"
                   />
                 </div>
-                <div class="form-group">
+                <div v-if="editForm.esEnTercero" class="form-group">
                   <label>Hora de llegada a sitio</label>
                   <input
-                    type="datetime-local"
                     v-model="editForm.horaLlegadaSitio"
+                    type="datetime-local"
                     class="form-control"
                   />
                 </div>
                 <div class="form-group">
                   <label>Hora de inicio trabajo *</label>
                   <input
-                    type="datetime-local"
                     v-model="editForm.fechaHoraInicio"
+                    type="datetime-local"
                     class="form-control"
                   />
                 </div>
                 <div class="form-group">
                   <label>Hora de fin trabajo *</label>
                   <input
-                    type="datetime-local"
                     v-model="editForm.fechaHoraFin"
+                    type="datetime-local"
                     class="form-control"
                   />
                 </div>
-                <div class="form-group">
+                <div v-if="editForm.esEnTercero" class="form-group">
                   <label>Hora de regreso a base *</label>
                   <input
-                    type="datetime-local"
                     v-model="editForm.horaRegresoABase"
+                    type="datetime-local"
                     class="form-control"
                   />
                 </div>
                 <div class="form-group">
                   <label>Horas de trabajo neto</label>
                   <div class="net-hours-badge">{{ editTotalHours }}</div>
+                </div>
+                <div v-if="editForm.esEnTercero" class="form-group">
+                  <label>Tiempo de arrastre</label>
+                  <div class="net-hours-badge">{{ editDragHours }}</div>
                 </div>
               </div>
 

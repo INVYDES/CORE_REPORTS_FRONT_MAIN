@@ -5,6 +5,7 @@ export interface ReportExtraMeta {
   falla?: string
   fallaLibre?: string
   areaTexto?: string
+  esEnTercero?: boolean
   materiales?: Array<{
     idItem?: number
     material: string
@@ -25,6 +26,7 @@ export function packReportDesarrollo(text: string, meta: ReportExtraMeta): strin
     !!meta.falla ||
     !!meta.fallaLibre ||
     !!meta.areaTexto ||
+    typeof meta.esEnTercero === 'boolean' ||
     (Array.isArray(meta.materiales) && meta.materiales.length > 0) ||
     (Array.isArray(meta.evidenciaComentarios) && meta.evidenciaComentarios.some(c => !!c))
 
@@ -117,6 +119,40 @@ export function calcNetHoursText(start?: string | null, end?: string | null): st
   const diffMs = e.getTime() - s.getTime()
   if (isNaN(diffMs) || diffMs <= 0) return '0h 0m'
   const totalMinutes = Math.round(diffMs / (1000 * 60))
+  const h = Math.floor(totalMinutes / 60)
+  const m = totalMinutes % 60
+  return `${h}h ${m}m`
+}
+
+export function calcDragHoursText(
+  horaSalidaBase?: string | null,
+  horaLlegadaSitio?: string | null,
+  fechaHoraFin?: string | null,
+  horaRegresoABase?: string | null
+): string {
+  const salidaBase = parseLocalDate(horaSalidaBase)
+  const llegadaSitio = parseLocalDate(horaLlegadaSitio)
+  const finTrabajo = parseLocalDate(fechaHoraFin)
+  const regresoBase = parseLocalDate(horaRegresoABase)
+
+  let totalMs = 0
+
+  if (salidaBase && llegadaSitio) {
+    const diffIda = llegadaSitio.getTime() - salidaBase.getTime()
+    if (!isNaN(diffIda) && diffIda > 0) {
+      totalMs += diffIda
+    }
+  }
+
+  if (finTrabajo && regresoBase) {
+    const diffRegreso = regresoBase.getTime() - finTrabajo.getTime()
+    if (!isNaN(diffRegreso) && diffRegreso > 0) {
+      totalMs += diffRegreso
+    }
+  }
+
+  if (totalMs <= 0) return '0h 0m'
+  const totalMinutes = Math.round(totalMs / (1000 * 60))
   const h = Math.floor(totalMinutes / 60)
   const m = totalMinutes % 60
   return `${h}h ${m}m`

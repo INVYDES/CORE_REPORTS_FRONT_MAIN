@@ -139,8 +139,9 @@ export function mapReporteForBackend(front: any, fileList: File[] = []): Backend
   if (tipo !== 'libre' && !front.origenDatosId)
     throw new Error('Selecciona un Ticket/Servicio origen')
   if (!front.fechaHoraInicio || !front.fechaHoraFin) throw new Error('Fecha inicio/fin requeridas')
-  if (estatus === 'finalizado' && !front.horaRegresoABase)
-    throw new Error('Hora regreso a base obligatoria al cerrar')
+  const esEnTercero = !!front.esEnTercero
+  if (esEnTercero && estatus === 'finalizado' && !front.horaRegresoABase)
+    throw new Error('Hora regreso a base obligatoria al cerrar en instalaciones de cliente/tercero')
 
   const materialesLimpios = (front.materiales || [])
     .filter((m: any) => m && String(m.material || '').trim() !== '')
@@ -163,6 +164,7 @@ export function mapReporteForBackend(front: any, fileList: File[] = []): Backend
     falla: String(front.fallaReportada || '').trim() || undefined,
     fallaLibre: String(front.fallaReportada || '').trim() || undefined,
     areaTexto: String(front.areaTexto || '').trim() || undefined,
+    esEnTercero,
     materiales: materialesLimpios.length > 0 ? materialesLimpios : undefined,
     evidenciaComentarios: evidenciaComentarios.some(Boolean) ? evidenciaComentarios : undefined,
   })
@@ -175,9 +177,9 @@ export function mapReporteForBackend(front: any, fileList: File[] = []): Backend
     categoria,
     fecha_inicio: toMysqlDatetime(front.fechaHoraInicio),
     fecha_fin: toMysqlDatetime(front.fechaHoraFin),
-    hora_salida: toMysqlDatetime(front.horaSalidaBase),
-    hora_llegada: toMysqlDatetime(front.horaLlegadaSitio),
-    hora_regreso: toMysqlDatetime(front.horaRegresoABase),
+    hora_salida: esEnTercero ? toMysqlDatetime(front.horaSalidaBase) : null,
+    hora_llegada: esEnTercero ? toMysqlDatetime(front.horaLlegadaSitio) : null,
+    hora_regreso: esEnTercero ? toMysqlDatetime(front.horaRegresoABase) : null,
     desarrollo: desarrolloConMeta,
     estatus,
     area_id: front.idSubdependencia || null,

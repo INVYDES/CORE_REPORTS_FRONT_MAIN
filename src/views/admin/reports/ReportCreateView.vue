@@ -15,7 +15,7 @@
   import { serviciosApi } from '../../../api/servicios'
   import { areasApi } from '../../../api/areas'
   import client from '../../../api/client'
-  import { calcNetHoursText } from '../../../utils/reportMeta'
+  import { calcNetHoursText, calcDragHoursText } from '../../../utils/reportMeta'
   import { useToast } from 'vue-toastification'
   import { Image as ImageIcon, Upload, Camera, FileText, Mail, Plus, X } from 'lucide-vue-next'
   const toast = useToast()
@@ -46,6 +46,7 @@
     responsableTexto: '',
     cargoTexto: '',
     ejecutoresIds: [] as number[],
+    esEnTercero: false,
     horaSalidaBase: '',
     horaLlegadaSitio: '',
     fechaHoraInicio: '',
@@ -291,6 +292,27 @@
   const totalHorasCalculadas = computed(() => {
     return calcNetHoursText(formData.fechaHoraInicio, formData.fechaHoraFin)
   })
+
+  const tiempoArrastreCalculado = computed(() => {
+    if (!formData.esEnTercero) return '0h 0m'
+    return calcDragHoursText(
+      formData.horaSalidaBase,
+      formData.horaLlegadaSitio,
+      formData.fechaHoraFin,
+      formData.horaRegresoABase
+    )
+  })
+
+  watch(
+    () => formData.esEnTercero,
+    val => {
+      if (!val) {
+        formData.horaSalidaBase = ''
+        formData.horaLlegadaSitio = ''
+        formData.horaRegresoABase = ''
+      }
+    }
+  )
 
   const addEjecutor = () => {
     if (formData.ejecutoresIds.length < 4) {
@@ -764,11 +786,23 @@
         <!-- Header title -->
         <h3 class="section-title">Sección 4 — Generales</h3>
 
+        <div class="checkbox-group-horizontal mb-1-5">
+          <input
+            id="esEnTercero"
+            v-model="formData.esEnTercero"
+            type="checkbox"
+            class="w-auto"
+          />
+          <label for="esEnTercero" class="cursor-pointer mb-0">
+            ¿Las actividades son en instalaciones del cliente o un tercero?
+          </label>
+        </div>
+
         <!-- Date and time of the activity, name of the activity (autofilled)-->
-        <div class="grid-3-cols mb-1-5">
+        <div v-if="formData.esEnTercero" class="grid-3-cols mb-1-5">
           <div class="form-group">
             <label>Hora de salida base</label>
-            <input type="datetime-local" v-model="formData.horaSalidaBase" />
+            <input v-model="formData.horaSalidaBase" type="datetime-local" />
             <span class="format-hint"
               >Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 08:00 (salida del taller)</span
             >
@@ -776,7 +810,7 @@
 
           <div class="form-group">
             <label>Hora de llegada a sitio</label>
-            <input type="datetime-local" v-model="formData.horaLlegadaSitio" />
+            <input v-model="formData.horaLlegadaSitio" type="datetime-local" />
             <span class="format-hint"
               >Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 09:15 (llegada cliente)</span
             >
@@ -784,7 +818,7 @@
 
           <div class="form-group">
             <label>Hora de inicio trabajo *</label>
-            <input type="datetime-local" v-model="formData.fechaHoraInicio" />
+            <input v-model="formData.fechaHoraInicio" type="datetime-local" />
             <span class="format-hint"
               >Obligatorio — Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 09:30</span
             >
@@ -792,17 +826,25 @@
         </div>
 
         <div class="grid-3-cols">
+          <div v-if="!formData.esEnTercero" class="form-group">
+            <label>Hora de inicio trabajo *</label>
+            <input v-model="formData.fechaHoraInicio" type="datetime-local" />
+            <span class="format-hint"
+              >Obligatorio — Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05 09:30</span
+            >
+          </div>
+
           <div class="form-group">
             <label>Hora de fin trabajo *</label>
-            <input type="datetime-local" v-model="formData.fechaHoraFin" />
+            <input v-model="formData.fechaHoraFin" type="datetime-local" />
             <span class="format-hint"
               >Obligatorio — debe ser posterior a inicio — ej. 2026-09-05 13:30</span
             >
           </div>
 
-          <div class="form-group">
+          <div v-if="formData.esEnTercero" class="form-group">
             <label>Hora de regreso a base *</label>
-            <input type="datetime-local" v-model="formData.horaRegresoABase" />
+            <input v-model="formData.horaRegresoABase" type="datetime-local" />
             <span class="format-hint"
               >Obligatorio al cerrar (finalizado) — Formato: AAAA-MM-DD HH:MM — ej. 2026-09-05
               15:00</span
@@ -818,6 +860,22 @@
               disabled
               class="input-disabled highlight-box"
             />
+          </div>
+        </div>
+
+        <div v-if="formData.esEnTercero" class="grid-3-cols mt-1-5">
+          <div class="form-group">
+            <label>Tiempo de arrastre (Traslado total)</label>
+            <input
+              type="text"
+              :value="tiempoArrastreCalculado"
+              disabled
+              class="input-disabled highlight-box"
+            />
+            <span class="format-hint"
+              >Suma de traslado a sitio (Llegada a sitio - Salida base) + regreso (Regreso a base -
+              Fin trabajo)</span
+            >
           </div>
         </div>
 
