@@ -11,11 +11,26 @@
     Undo2,
     Redo2,
     RotateCcw,
+    Trash2,
     Check,
     X,
   } from 'lucide-vue-next'
 
   type ToolMode = 'draw' | 'arrow' | 'rect' | 'text' | 'pixelate' | 'crop'
+
+  interface TextAnnotation {
+    id: number
+    text: string
+    x: number
+    y: number
+    color: string
+    sizeLevel: number
+  }
+
+  interface HistoryStep {
+    bitmap: HTMLCanvasElement
+    texts: TextAnnotation[]
+  }
 
   const props = defineProps<{
     modelValue: boolean
@@ -34,13 +49,13 @@
 
   const activeTool = ref<ToolMode>('arrow')
   const activeColor = ref('#ef4444')
-  const strokeSize = ref(4)
+  const strokeSize = ref(5)
 
   const colors = [
     { value: '#ef4444', label: 'Rojo' },
     { value: '#facc15', label: 'Amarillo' },
     { value: '#22c55e', label: 'Verde' },
-    { value: '#3b82f6', label: 'Azul' },
+    { value: '#2563eb', label: 'Azul' },
     { value: '#ffffff', label: 'Blanco' },
     { value: '#000000', label: 'Negro' },
   ]
@@ -51,12 +66,20 @@
     { value: 8, label: 'Grueso' },
   ]
 
-  // Historial de snapshots (cada entrada guarda un canvas offscreen con su propio ancho/alto)
-  const history = ref<HTMLCanvasElement[]>([])
+  // Historial de pasos (bitmap + etiquetas de texto móviles)
+  const history = ref<HistoryStep[]>([])
   const historyIndex = ref(-1)
+  const workingTexts = ref<TextAnnotation[]>([])
+  const selectedTextId = ref<number | null>(null)
+  let nextTextId = 1
 
   // Estado de interacción de puntero
   const isPointerDown = ref(false)
+  const isDraggingText = ref(false)
+  const textDragMoved = ref(false)
+  const textDragOffset = ref({ dx: 0, dy: 0 })
+  const hoveredTextId = ref<number | null>(null)
+
   const startPoint = ref({ x: 0, y: 0 })
   const currentPoint = ref({ x: 0, y: 0 })
   const freehandPoints = ref<Array<{ x: number; y: number }>>([])
@@ -66,6 +89,7 @@
 
   // Entrada de texto
   const showTextPrompt = ref(false)
+  const editingExistingTextId = ref<number | null>(null)
   const textPosition = ref({ x: 0, y: 0 })
   const textInputValue = ref('')
   const textInputRef = ref<HTMLInputElement | null>(null)
@@ -84,32 +108,126 @@
     return off
   }
 
-  const renderCurrentSnapshot = () => {
+  const cloneTexts = (list: TextAnnotation[]): TextAnnotation[] =>
+    list.map(t => ({ ...t }))
+
+  const getScaleFactor = (): number => {
     const canvas = canvasRef.value
-    const snap = history.value[historyIndex.value]
-    if (!canvas || !snap) return
-    if (canvas.width !== snap.width || canvas.height !== snap.height) {
-      canvas.width = snap.width
-      canvas.height = snap.height
+    if (!canvas) return 1
+    return Math.max(1, Math.max(canvas.width, canvas.height) / 800)
+  }
+
+  const getTextBoxMetrics = (
+    ctx: CanvasRenderingContext2D,
+    item: TextAnnotation,
+    canvasW: number,
+    canvasH: number
+  ) => {
+    const scale = getScaleFactor()
+    const fontSize = Math.round((14 + item.sizeLevel * 2) * scale)
+    ctx.save()
+    ctx.font = `bold ${fontSize}px Arial, sans-serif`
+    const metrics = ctx.measureText(item.text)
+    ctx.restore()
+
+    const padX = Math.round(6 * scale)
+    const padY = Math.round(4 * scale)
+    const boxW = metrics.width + padX * 2
+    const boxH = fontSize + padY * 2
+    const drawX = Math.min(Math.max(padX, item.x), Math.max(padX, canvasW - boxW + padX))
+    const drawY = Math.min(Math.max(padY, item.y), Math.max(padY, canvasH - boxH + padY))
+
+    return {
+      fontSize,
+      padX,
+      padY,
+      boxX: drawX - padX,
+      boxY: drawY - padY,
+      boxW,
+      boxH,
+      drawX,
+      drawY,
+    }
+  }
+
+  const drawTextsOnContext = (
+    ctx: CanvasRenderingContext2D,
+    texts: TextAnnotation[],
+    canvasW: number,
+    canvasH: number,
+    showSelectionOutline = true
+  ) => {
+    const scale = getScaleFactor()
+    for (const item of texts) {
+      const m = getTextBoxMetrics(ctx, item, canvasW, canvasH)
+      ctx.save()
+      ctx.font = `bold ${m.fontSize}px Arial, sans-serif`
+      ctx.textBaseline = 'top'
+
+      ctx.fillStyle =
+        item.color === '#000000' ? 'rgba(255, 255, 255, 0.88)' : 'rgba(15, 23, 42, 0.82)'
+      ctx.fillRect(m.boxX, m.boxY, m.boxW, m.boxH)
+
+      ctx.fillStyle = item.color
+      ctx.fillText(item.text, m.drawX, m.drawY)
+
+      if (showSelectionOutline && (item.id === selectedTextId.value || item.id === hoveredTextId.value)) {
+        ctx.strokeStyle = item.id === selectedTextId.value ? '#3b82f6' : 'rgba(148, 163, 184, 0.9)'
+        ctx.lineWidth = Math.max(2, 1.5 * scale)
+        ctx.setLineDash([5, 3])
+        ctx.strokeRect(m.boxX - 2, m.boxY - 2, m.boxW + 4, m.boxH + 4)
+      }
+      ctx.restore()
+    }
+  }
+
+  const renderCurrentSnapshot = (showSelectionOutline = true) => {
+    const canvas = canvasRef.value
+    const step = history.value[historyIndex.value]
+    if (!canvas || !step) return
+    if (canvas.width !== step.bitmap.width || canvas.height !== step.bitmap.height) {
+      canvas.width = step.bitmap.width
+      canvas.height = step.bitmap.height
     }
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(snap, 0, 0)
+    ctx.drawImage(step.bitmap, 0, 0)
+    drawTextsOnContext(ctx, workingTexts.value, canvas.width, canvas.height, showSelectionOutline)
   }
 
-  const pushSnapshot = () => {
-    const canvas = canvasRef.value
-    if (!canvas) return
-    const snap = cloneCanvas(canvas)
+  const getCurrentBitmapClone = (): HTMLCanvasElement | null => {
+    const step = history.value[historyIndex.value]
+    if (!step) return null
+    return cloneCanvas(step.bitmap)
+  }
+
+  const pushHistoryStep = (newBitmap: HTMLCanvasElement, newTexts: TextAnnotation[]) => {
     const nextList = history.value.slice(0, historyIndex.value + 1)
-    nextList.push(snap)
-    // Limitar historial a 25 pasos para cuidar memoria
+    nextList.push({
+      bitmap: cloneCanvas(newBitmap),
+      texts: cloneTexts(newTexts),
+    })
     if (nextList.length > 25) {
       nextList.shift()
     }
     history.value = nextList
     historyIndex.value = nextList.length - 1
+    workingTexts.value = cloneTexts(newTexts)
+    renderCurrentSnapshot()
+  }
+
+  const syncFromHistoryStep = () => {
+    const step = history.value[historyIndex.value]
+    if (!step) return
+    workingTexts.value = cloneTexts(step.texts)
+    if (
+      selectedTextId.value !== null &&
+      !workingTexts.value.some(t => t.id === selectedTextId.value)
+    ) {
+      selectedTextId.value = null
+    }
+    renderCurrentSnapshot()
   }
 
   const undo = () => {
@@ -117,7 +235,7 @@
     cropRect.value = null
     showTextPrompt.value = false
     historyIndex.value -= 1
-    renderCurrentSnapshot()
+    syncFromHistoryStep()
   }
 
   const redo = () => {
@@ -125,15 +243,16 @@
     cropRect.value = null
     showTextPrompt.value = false
     historyIndex.value += 1
-    renderCurrentSnapshot()
+    syncFromHistoryStep()
   }
 
   const resetToOriginal = () => {
     if (history.value.length <= 1) return
     cropRect.value = null
     showTextPrompt.value = false
+    selectedTextId.value = null
     historyIndex.value = 0
-    renderCurrentSnapshot()
+    syncFromHistoryStep()
   }
 
   const selectTool = (tool: ToolMode) => {
@@ -141,6 +260,30 @@
     cropRect.value = null
     showTextPrompt.value = false
     renderCurrentSnapshot()
+  }
+
+  const setColor = (colorVal: string) => {
+    activeColor.value = colorVal
+    if (selectedTextId.value !== null) {
+      const target = workingTexts.value.find(t => t.id === selectedTextId.value)
+      const step = history.value[historyIndex.value]
+      if (target && step && target.color !== colorVal) {
+        target.color = colorVal
+        pushHistoryStep(step.bitmap, workingTexts.value)
+      }
+    }
+  }
+
+  const setStrokeSize = (sizeVal: number) => {
+    strokeSize.value = sizeVal
+    if (selectedTextId.value !== null) {
+      const target = workingTexts.value.find(t => t.id === selectedTextId.value)
+      const step = history.value[historyIndex.value]
+      if (target && step && target.sizeLevel !== sizeVal) {
+        target.sizeLevel = sizeVal
+        pushHistoryStep(step.bitmap, workingTexts.value)
+      }
+    }
   }
 
   const loadImageObject = (src: string): Promise<HTMLImageElement> => {
@@ -161,6 +304,8 @@
     loadError.value = ''
     history.value = []
     historyIndex.value = -1
+    workingTexts.value = []
+    selectedTextId.value = null
     cropRect.value = null
     showTextPrompt.value = false
 
@@ -170,7 +315,6 @@
       try {
         img = await loadImageObject(props.imageSrc)
       } catch {
-        // Fallback por si el servidor remoto bloquea crossOrigin directo en <img>
         const resp = await fetch(props.imageSrc)
         const blob = await resp.blob()
         tempBlobUrl = URL.createObjectURL(blob)
@@ -181,7 +325,6 @@
       const canvas = canvasRef.value
       if (!canvas) return
 
-      // Escalar a máximo 1600px de lado mayor para edición fluida y alta nitidez en PDF
       const maxDim = 1600
       let w = img.naturalWidth || img.width || 800
       let h = img.naturalHeight || img.height || 600
@@ -198,9 +341,10 @@
       ctx.clearRect(0, 0, w, h)
       ctx.drawImage(img, 0, 0, w, h)
 
-      const firstSnap = cloneCanvas(canvas)
-      history.value = [firstSnap]
+      const firstBitmap = cloneCanvas(canvas)
+      history.value = [{ bitmap: firstBitmap, texts: [] }]
       historyIndex.value = 0
+      workingTexts.value = []
     } catch {
       loadError.value = 'No se pudo cargar la imagen para editar.'
     } finally {
@@ -231,6 +375,26 @@
     window.removeEventListener('keydown', handleKeydown)
   })
 
+  const deleteSelectedText = () => {
+    if (selectedTextId.value === null) return
+    const step = history.value[historyIndex.value]
+    if (!step) return
+    const filtered = workingTexts.value.filter(t => t.id !== selectedTextId.value)
+    selectedTextId.value = null
+    pushHistoryStep(step.bitmap, filtered)
+  }
+
+  const editSelectedText = () => {
+    if (selectedTextId.value === null) return
+    const target = workingTexts.value.find(t => t.id === selectedTextId.value)
+    if (!target) return
+    editingExistingTextId.value = target.id
+    textInputValue.value = target.text
+    textPosition.value = { x: target.x, y: target.y }
+    showTextPrompt.value = true
+    nextTick(() => textInputRef.value?.focus())
+  }
+
   const handleKeydown = (e: KeyboardEvent) => {
     if (!props.modelValue) return
     if (showTextPrompt.value) return
@@ -241,6 +405,12 @@
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
       e.preventDefault()
       redo()
+    } else if (
+      (e.key === 'Delete' || e.key === 'Backspace') &&
+      selectedTextId.value !== null
+    ) {
+      e.preventDefault()
+      deleteSelectedText()
     }
   }
 
@@ -256,10 +426,27 @@
     }
   }
 
-  const getScaleFactor = (): number => {
+  const findTextAtPoint = (pt: { x: number; y: number }): TextAnnotation | null => {
     const canvas = canvasRef.value
-    if (!canvas) return 1
-    return Math.max(1, Math.max(canvas.width, canvas.height) / 800)
+    if (!canvas) return null
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+
+    // Recorrer de arriba hacia abajo (último agregado primero)
+    for (let i = workingTexts.value.length - 1; i >= 0; i--) {
+      const item = workingTexts.value[i]
+      if (!item) continue
+      const m = getTextBoxMetrics(ctx, item, canvas.width, canvas.height)
+      if (
+        pt.x >= m.boxX - 4 &&
+        pt.x <= m.boxX + m.boxW + 4 &&
+        pt.y >= m.boxY - 4 &&
+        pt.y <= m.boxY + m.boxH + 4
+      ) {
+        return item
+      }
+    }
+    return null
   }
 
   const drawArrowShape = (
@@ -283,13 +470,11 @@
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
 
-    // Línea principal
     ctx.beginPath()
     ctx.moveTo(x1, y1)
     ctx.lineTo(x2 - headLen * 0.65 * Math.cos(angle), y2 - headLen * 0.65 * Math.sin(angle))
     ctx.stroke()
 
-    // Punta de flecha
     ctx.beginPath()
     ctx.moveTo(x2, y2)
     ctx.lineTo(
@@ -330,21 +515,23 @@
 
   const applyPixelateRegion = (
     ctx: CanvasRenderingContext2D,
+    sourceCanvas: HTMLCanvasElement,
     x1: number,
     y1: number,
     x2: number,
     y2: number,
     previewOnly = false
   ) => {
-    const canvas = canvasRef.value
-    if (!canvas) return
     const rx = Math.max(0, Math.floor(Math.min(x1, x2)))
     const ry = Math.max(0, Math.floor(Math.min(y1, y2)))
-    const rw = Math.min(canvas.width - rx, Math.floor(Math.abs(x2 - x1)))
-    const rh = Math.min(canvas.height - ry, Math.floor(Math.abs(y2 - y1)))
+    const rw = Math.min(sourceCanvas.width - rx, Math.floor(Math.abs(x2 - x1)))
+    const rh = Math.min(sourceCanvas.height - ry, Math.floor(Math.abs(y2 - y1)))
     if (rw < 6 || rh < 6) return
 
-    const pixelBlock = Math.max(10, Math.round(Math.max(canvas.width, canvas.height) / 55))
+    const pixelBlock = Math.max(
+      10,
+      Math.round(Math.max(sourceCanvas.width, sourceCanvas.height) / 55)
+    )
     const sw = Math.max(1, Math.floor(rw / pixelBlock))
     const sh = Math.max(1, Math.floor(rh / pixelBlock))
 
@@ -355,13 +542,13 @@
     if (!tCtx) return
 
     tCtx.imageSmoothingEnabled = false
-    tCtx.drawImage(canvas, rx, ry, rw, rh, 0, 0, sw, sh)
+    tCtx.drawImage(sourceCanvas, rx, ry, rw, rh, 0, 0, sw, sh)
 
     ctx.save()
     ctx.imageSmoothingEnabled = false
     ctx.drawImage(temp, 0, 0, sw, sh, rx, ry, rw, rh)
     if (previewOnly) {
-      ctx.strokeStyle = '#38bdf8'
+      ctx.strokeStyle = '#3b82f6'
       ctx.lineWidth = 2
       ctx.setLineDash([6, 4])
       ctx.strokeRect(rx, ry, rw, rh)
@@ -376,15 +563,13 @@
     const canvas = canvasRef.value
     if (!canvas) return
     ctx.save()
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)'
-    // Sombra exterior alrededor del recorte
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.6)'
     ctx.fillRect(0, 0, canvas.width, rect.y)
     ctx.fillRect(0, rect.y, rect.x, rect.h)
     ctx.fillRect(rect.x + rect.w, rect.y, canvas.width - (rect.x + rect.w), rect.h)
     ctx.fillRect(0, rect.y + rect.h, canvas.width, canvas.height - (rect.y + rect.h))
 
-    // Marco punteado del área a recortar
-    ctx.strokeStyle = '#ffffff'
+    ctx.strokeStyle = '#3b82f6'
     ctx.lineWidth = Math.max(2, getScaleFactor() * 1.5)
     ctx.setLineDash([8, 6])
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h)
@@ -396,7 +581,32 @@
     if (!canvas || isLoading.value) return
     const pt = getCanvasCoords(e)
 
+    // Si el usuario hace clic sobre un texto ya colocado (en cualquier modo excepto recorte),
+    // permite seleccionarlo y arrastrarlo libremente de lugar
+    if (activeTool.value !== 'crop') {
+      const hitText = findTextAtPoint(pt)
+      if (hitText) {
+        selectedTextId.value = hitText.id
+        activeColor.value = hitText.color
+        strokeSize.value = hitText.sizeLevel
+        isDraggingText.value = true
+        textDragMoved.value = false
+        isPointerDown.value = true
+        textDragOffset.value = {
+          dx: pt.x - hitText.x,
+          dy: pt.y - hitText.y,
+        }
+        canvas.setPointerCapture(e.pointerId)
+        renderCurrentSnapshot()
+        return
+      }
+    }
+
+    selectedTextId.value = null
+    renderCurrentSnapshot()
+
     if (activeTool.value === 'text') {
+      editingExistingTextId.value = null
       textPosition.value = pt
       textInputValue.value = ''
       showTextPrompt.value = true
@@ -415,18 +625,46 @@
   }
 
   const onPointerMove = (e: PointerEvent) => {
-    if (!isPointerDown.value) return
     const canvas = canvasRef.value
     if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
     const pt = getCanvasCoords(e)
+
+    if (!isPointerDown.value) {
+      const hit = activeTool.value !== 'crop' ? findTextAtPoint(pt) : null
+      const hitId = hit ? hit.id : null
+      if (hoveredTextId.value !== hitId) {
+        hoveredTextId.value = hitId
+        renderCurrentSnapshot()
+      }
+      return
+    }
+
+    if (isDraggingText.value && selectedTextId.value !== null) {
+      const target = workingTexts.value.find(t => t.id === selectedTextId.value)
+      if (target) {
+        const nextX = Math.max(8, Math.min(canvas.width - 20, pt.x - textDragOffset.value.dx))
+        const nextY = Math.max(8, Math.min(canvas.height - 20, pt.y - textDragOffset.value.dy))
+        if (Math.abs(nextX - target.x) > 1 || Math.abs(nextY - target.y) > 1) {
+          textDragMoved.value = true
+        }
+        target.x = nextX
+        target.y = nextY
+        renderCurrentSnapshot()
+      }
+      return
+    }
+
+    const ctx = canvas.getContext('2d')
+    const step = history.value[historyIndex.value]
+    if (!ctx || !step) return
+
     currentPoint.value = pt
     const scale = getScaleFactor()
     const lineWidth = strokeSize.value * scale
 
-    renderCurrentSnapshot()
+    // Redibujar base bitmap
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(step.bitmap, 0, 0)
 
     if (activeTool.value === 'draw') {
       freehandPoints.value.push(pt)
@@ -468,8 +706,21 @@
         lineWidth
       )
     } else if (activeTool.value === 'pixelate') {
-      applyPixelateRegion(ctx, startPoint.value.x, startPoint.value.y, pt.x, pt.y, true)
-    } else if (activeTool.value === 'crop') {
+      applyPixelateRegion(
+        ctx,
+        step.bitmap,
+        startPoint.value.x,
+        startPoint.value.y,
+        pt.x,
+        pt.y,
+        true
+      )
+    }
+
+    // Dibujar textos encima
+    drawTextsOnContext(ctx, workingTexts.value, canvas.width, canvas.height, true)
+
+    if (activeTool.value === 'crop') {
       const rx = Math.min(startPoint.value.x, pt.x)
       const ry = Math.min(startPoint.value.y, pt.y)
       const rw = Math.abs(pt.x - startPoint.value.x)
@@ -488,8 +739,21 @@
       canvas.releasePointerCapture(e.pointerId)
     }
 
+    if (isDraggingText.value) {
+      isDraggingText.value = false
+      const step = history.value[historyIndex.value]
+      if (textDragMoved.value && step) {
+        pushHistoryStep(step.bitmap, workingTexts.value)
+      }
+      textDragMoved.value = false
+      return
+    }
+
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    const baseBitmap = getCurrentBitmapClone()
+    const bCtx = baseBitmap?.getContext('2d')
+    if (!ctx || !baseBitmap || !bCtx) return
+
     const pt = getCanvasCoords(e)
     const scale = getScaleFactor()
     const lineWidth = strokeSize.value * scale
@@ -510,34 +774,34 @@
       return
     }
 
-    renderCurrentSnapshot()
-
     if (activeTool.value === 'draw') {
       if (freehandPoints.value.length > 1) {
-        ctx.save()
-        ctx.strokeStyle = activeColor.value
-        ctx.lineWidth = lineWidth
-        ctx.lineCap = 'round'
-        ctx.lineJoin = 'round'
-        ctx.beginPath()
+        bCtx.save()
+        bCtx.strokeStyle = activeColor.value
+        bCtx.lineWidth = lineWidth
+        bCtx.lineCap = 'round'
+        bCtx.lineJoin = 'round'
+        bCtx.beginPath()
         const pts = freehandPoints.value
         const first = pts[0]
         if (first) {
-          ctx.moveTo(first.x, first.y)
+          bCtx.moveTo(first.x, first.y)
           for (let i = 1; i < pts.length; i++) {
             const p = pts[i]
-            if (p) ctx.lineTo(p.x, p.y)
+            if (p) bCtx.lineTo(p.x, p.y)
           }
-          ctx.stroke()
+          bCtx.stroke()
         }
-        ctx.restore()
-        pushSnapshot()
+        bCtx.restore()
+        pushHistoryStep(baseBitmap, workingTexts.value)
+      } else {
+        renderCurrentSnapshot()
       }
       freehandPoints.value = []
     } else if (activeTool.value === 'arrow') {
       if (Math.hypot(pt.x - startPoint.value.x, pt.y - startPoint.value.y) >= 8) {
         drawArrowShape(
-          ctx,
+          bCtx,
           startPoint.value.x,
           startPoint.value.y,
           pt.x,
@@ -545,7 +809,9 @@
           activeColor.value,
           lineWidth
         )
-        pushSnapshot()
+        pushHistoryStep(baseBitmap, workingTexts.value)
+      } else {
+        renderCurrentSnapshot()
       }
     } else if (activeTool.value === 'rect') {
       if (
@@ -553,7 +819,7 @@
         Math.abs(pt.y - startPoint.value.y) >= 6
       ) {
         drawRectShape(
-          ctx,
+          bCtx,
           startPoint.value.x,
           startPoint.value.y,
           pt.x,
@@ -561,42 +827,64 @@
           activeColor.value,
           lineWidth
         )
-        pushSnapshot()
+        pushHistoryStep(baseBitmap, workingTexts.value)
+      } else {
+        renderCurrentSnapshot()
       }
     } else if (activeTool.value === 'pixelate') {
       if (
         Math.abs(pt.x - startPoint.value.x) >= 8 &&
         Math.abs(pt.y - startPoint.value.y) >= 8
       ) {
-        applyPixelateRegion(ctx, startPoint.value.x, startPoint.value.y, pt.x, pt.y, false)
-        pushSnapshot()
+        applyPixelateRegion(
+          bCtx,
+          baseBitmap,
+          startPoint.value.x,
+          startPoint.value.y,
+          pt.x,
+          pt.y,
+          false
+        )
+        pushHistoryStep(baseBitmap, workingTexts.value)
+      } else {
+        renderCurrentSnapshot()
       }
     }
   }
 
   const applyCrop = () => {
-    const canvas = canvasRef.value
     const rect = cropRect.value
-    const snap = history.value[historyIndex.value]
-    if (!canvas || !rect || !snap) return
+    const step = history.value[historyIndex.value]
+    if (!rect || !step) return
 
     const rx = Math.max(0, Math.round(rect.x))
     const ry = Math.max(0, Math.round(rect.y))
-    const rw = Math.min(snap.width - rx, Math.round(rect.w))
-    const rh = Math.min(snap.height - ry, Math.round(rect.h))
+    const rw = Math.min(step.bitmap.width - rx, Math.round(rect.w))
+    const rh = Math.min(step.bitmap.height - ry, Math.round(rect.h))
     if (rw < 20 || rh < 20) {
       cropRect.value = null
       renderCurrentSnapshot()
       return
     }
 
-    canvas.width = rw
-    canvas.height = rh
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.drawImage(snap, rx, ry, rw, rh, 0, 0, rw, rh)
+    const croppedBitmap = document.createElement('canvas')
+    croppedBitmap.width = rw
+    croppedBitmap.height = rh
+    const cCtx = croppedBitmap.getContext('2d')
+    if (!cCtx) return
+    cCtx.drawImage(step.bitmap, rx, ry, rw, rh, 0, 0, rw, rh)
+
+    // Ajustar coordenadas de los textos que queden dentro del recorte
+    const shiftedTexts = workingTexts.value
+      .map(t => ({
+        ...t,
+        x: t.x - rx,
+        y: t.y - ry,
+      }))
+      .filter(t => t.x >= 0 && t.x <= rw && t.y >= 0 && t.y <= rh)
+
     cropRect.value = null
-    pushSnapshot()
+    pushHistoryStep(croppedBitmap, shiftedTexts)
     activeTool.value = 'arrow'
   }
 
@@ -606,75 +894,85 @@
   }
 
   const rotate90 = () => {
-    const canvas = canvasRef.value
-    const snap = history.value[historyIndex.value]
-    if (!canvas || !snap) return
+    const step = history.value[historyIndex.value]
+    if (!step) return
 
     cropRect.value = null
     showTextPrompt.value = false
 
-    const newW = snap.height
-    const newH = snap.width
-    canvas.width = newW
-    canvas.height = newH
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    const oldW = step.bitmap.width
+    const oldH = step.bitmap.height
+    const newW = oldH
+    const newH = oldW
 
-    ctx.save()
-    ctx.translate(newW / 2, newH / 2)
-    ctx.rotate(Math.PI / 2)
-    ctx.drawImage(snap, -snap.width / 2, -snap.height / 2)
-    ctx.restore()
+    const rotatedBitmap = document.createElement('canvas')
+    rotatedBitmap.width = newW
+    rotatedBitmap.height = newH
+    const rCtx = rotatedBitmap.getContext('2d')
+    if (!rCtx) return
 
-    pushSnapshot()
+    rCtx.save()
+    rCtx.translate(newW / 2, newH / 2)
+    rCtx.rotate(Math.PI / 2)
+    rCtx.drawImage(step.bitmap, -oldW / 2, -oldH / 2)
+    rCtx.restore()
+
+    const rotatedTexts = workingTexts.value.map(t => ({
+      ...t,
+      x: Math.max(10, Math.min(newW - 20, oldH - t.y)),
+      y: Math.max(10, Math.min(newH - 20, t.x)),
+    }))
+
+    pushHistoryStep(rotatedBitmap, rotatedTexts)
   }
 
   const confirmTextInsert = () => {
     const text = textInputValue.value.trim()
     showTextPrompt.value = false
-    if (!text) return
+    const step = history.value[historyIndex.value]
+    if (!text || !step) {
+      editingExistingTextId.value = null
+      return
+    }
 
-    const canvas = canvasRef.value
-    if (!canvas) return
-    renderCurrentSnapshot()
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (editingExistingTextId.value !== null) {
+      const target = workingTexts.value.find(t => t.id === editingExistingTextId.value)
+      if (target) {
+        target.text = text
+        target.color = activeColor.value
+        target.sizeLevel = strokeSize.value
+        selectedTextId.value = target.id
+        pushHistoryStep(step.bitmap, workingTexts.value)
+      }
+      editingExistingTextId.value = null
+      textInputValue.value = ''
+      return
+    }
 
-    const scale = getScaleFactor()
-    const fontSize = Math.round((14 + strokeSize.value * 2) * scale)
-    ctx.save()
-    ctx.font = `bold ${fontSize}px Arial, sans-serif`
-    ctx.textBaseline = 'top'
-
-    const metrics = ctx.measureText(text)
-    const padX = Math.round(6 * scale)
-    const padY = Math.round(4 * scale)
-    const boxW = metrics.width + padX * 2
-    const boxH = fontSize + padY * 2
-
-    const drawX = Math.min(Math.max(padX, textPosition.value.x), Math.max(padX, canvas.width - boxW))
-    const drawY = Math.min(Math.max(padY, textPosition.value.y), Math.max(padY, canvas.height - boxH))
-
-    // Fondo semitransparente para máxima legibilidad sobre cualquier foto
-    ctx.fillStyle = activeColor.value === '#000000' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(15, 23, 42, 0.78)'
-    ctx.fillRect(drawX - padX, drawY - padY, boxW, boxH)
-
-    ctx.fillStyle = activeColor.value
-    ctx.fillText(text, drawX, drawY)
-    ctx.restore()
-
-    pushSnapshot()
+    const newItem: TextAnnotation = {
+      id: nextTextId++,
+      text,
+      x: textPosition.value.x,
+      y: textPosition.value.y,
+      color: activeColor.value,
+      sizeLevel: strokeSize.value,
+    }
+    const nextTexts = [...workingTexts.value, newItem]
+    selectedTextId.value = newItem.id
+    pushHistoryStep(step.bitmap, nextTexts)
     textInputValue.value = ''
   }
 
   const cancelTextInsert = () => {
     showTextPrompt.value = false
+    editingExistingTextId.value = null
     textInputValue.value = ''
   }
 
   const closeEditor = () => {
     cropRect.value = null
     showTextPrompt.value = false
+    selectedTextId.value = null
     emit('update:modelValue', false)
   }
 
@@ -682,11 +980,11 @@
     const canvas = canvasRef.value
     if (!canvas) return
 
-    // Si había un recorte activo sin aplicar, renderizar el snapshot limpio antes de exportar
-    if (cropRect.value) {
-      cropRect.value = null
-      renderCurrentSnapshot()
-    }
+    cropRect.value = null
+    selectedTextId.value = null
+    hoveredTextId.value = null
+    // Renderizar sin bordes de selección antes de exportar
+    renderCurrentSnapshot(false)
 
     canvas.toBlob(
       blob => {
@@ -707,26 +1005,26 @@
 </script>
 
 <template>
-  <div v-if="modelValue" class="wa-editor-overlay" @click.self="closeEditor">
-    <div class="wa-editor-modal">
-      <!-- Barra superior oscura estilo WhatsApp Web -->
-      <header class="wa-toolbar">
-        <div class="wa-toolbar-left">
+  <div v-if="modelValue" class="cr-editor-overlay" @click.self="closeEditor">
+    <div class="cr-editor-modal">
+      <!-- Barra superior con los colores institucionales de CoreReports -->
+      <header class="cr-toolbar">
+        <div class="cr-toolbar-left">
           <button
             type="button"
-            class="wa-icon-btn"
+            class="cr-icon-btn"
             title="Cerrar sin guardar"
             @click="closeEditor"
           >
             <X :size="20" />
-            <span class="wa-btn-label">Cerrar</span>
+            <span class="cr-btn-label">Cerrar</span>
           </button>
         </div>
 
-        <div class="wa-toolbar-center">
+        <div class="cr-toolbar-center">
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             :class="{ active: activeTool === 'crop' }"
             title="Recortar imagen"
             @click="selectTool('crop')"
@@ -737,7 +1035,7 @@
 
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             title="Rotar 90 grados"
             @click="rotate90"
           >
@@ -747,7 +1045,7 @@
 
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             :class="{ active: activeTool === 'arrow' }"
             title="Insertar flecha de señalamiento"
             @click="selectTool('arrow')"
@@ -758,7 +1056,7 @@
 
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             :class="{ active: activeTool === 'rect' }"
             title="Insertar recuadro de señalamiento"
             @click="selectTool('rect')"
@@ -769,7 +1067,7 @@
 
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             :class="{ active: activeTool === 'draw' }"
             title="Dibujo libre"
             @click="selectTool('draw')"
@@ -780,9 +1078,9 @@
 
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             :class="{ active: activeTool === 'text' }"
-            title="Agregar texto sobre la imagen"
+            title="Agregar o mover texto sobre la imagen"
             @click="selectTool('text')"
           >
             <Type :size="18" />
@@ -791,7 +1089,7 @@
 
           <button
             type="button"
-            class="wa-tool-btn"
+            class="cr-tool-btn"
             :class="{ active: activeTool === 'pixelate' }"
             title="Pixelar zona sensible"
             @click="selectTool('pixelate')"
@@ -800,11 +1098,11 @@
             <span>Pixelar</span>
           </button>
 
-          <div class="wa-divider"></div>
+          <div class="cr-divider"></div>
 
           <button
             type="button"
-            class="wa-icon-btn"
+            class="cr-icon-btn"
             :disabled="!canUndo()"
             title="Deshacer (Ctrl+Z)"
             @click="undo"
@@ -814,7 +1112,7 @@
 
           <button
             type="button"
-            class="wa-icon-btn"
+            class="cr-icon-btn"
             :disabled="!canRedo()"
             title="Rehacer (Ctrl+Y)"
             @click="redo"
@@ -824,7 +1122,7 @@
 
           <button
             type="button"
-            class="wa-icon-btn"
+            class="cr-icon-btn"
             :disabled="history.length <= 1"
             title="Restaurar imagen original"
             @click="resetToOriginal"
@@ -833,10 +1131,10 @@
           </button>
         </div>
 
-        <div class="wa-toolbar-right">
+        <div class="cr-toolbar-right">
           <button
             type="button"
-            class="wa-save-btn"
+            class="cr-save-btn"
             title="Aplicar cambios a la foto"
             @click="saveEditedImage"
           >
@@ -846,47 +1144,58 @@
         </div>
       </header>
 
-      <!-- Sub-barra de color, grosor y acciones contextuales -->
-      <div class="wa-subbar">
+      <!-- Sub-barra de color, grosor y acciones sobre textos o recortes -->
+      <div class="cr-subbar">
         <div
-          v-if="['draw', 'arrow', 'rect', 'text'].includes(activeTool)"
-          class="wa-style-controls"
+          v-if="['draw', 'arrow', 'rect', 'text'].includes(activeTool) || selectedTextId !== null"
+          class="cr-style-controls"
         >
-          <div class="wa-color-group">
-            <span class="wa-subbar-label">Color:</span>
+          <div class="cr-color-group">
+            <span class="cr-subbar-label">Color:</span>
             <button
               v-for="c in colors"
               :key="c.value"
               type="button"
-              class="wa-color-dot"
+              class="cr-color-dot"
               :class="{ selected: activeColor === c.value }"
               :style="{ backgroundColor: c.value }"
               :title="c.label"
-              @click="activeColor = c.value"
+              @click="setColor(c.value)"
             ></button>
           </div>
 
-          <div class="wa-size-group">
-            <span class="wa-subbar-label">Grosor:</span>
+          <div class="cr-size-group">
+            <span class="cr-subbar-label">
+              {{ activeTool === 'text' || selectedTextId !== null ? 'Tamaño:' : 'Grosor:' }}
+            </span>
             <button
               v-for="s in strokeSizes"
               :key="s.value"
               type="button"
-              class="wa-size-pill"
+              class="cr-size-pill"
               :class="{ selected: strokeSize === s.value }"
-              @click="strokeSize = s.value"
+              @click="setStrokeSize(s.value)"
             >
               {{ s.label }}
             </button>
           </div>
+
+          <div v-if="selectedTextId !== null" class="cr-text-selected-actions">
+            <button type="button" class="cr-action-secondary" @click="editSelectedText">
+              <Pencil :size="14" /> Editar texto
+            </button>
+            <button type="button" class="cr-action-danger" @click="deleteSelectedText">
+              <Trash2 :size="14" /> Quitar texto
+            </button>
+          </div>
         </div>
 
-        <div v-else-if="activeTool === 'pixelate'" class="wa-hint-text">
+        <div v-else-if="activeTool === 'pixelate'" class="cr-hint-text">
           Arrastra sobre la imagen para pixelar placas, rostros o datos sensibles.
         </div>
 
-        <div v-else-if="activeTool === 'crop'" class="wa-crop-actions">
-          <span class="wa-hint-text">
+        <div v-else-if="activeTool === 'crop'" class="cr-crop-actions">
+          <span class="cr-hint-text">
             {{
               cropRect
                 ? 'Ajusta o aplica el área seleccionada:'
@@ -894,50 +1203,52 @@
             }}
           </span>
           <template v-if="cropRect">
-            <button type="button" class="wa-crop-confirm" @click="applyCrop">
+            <button type="button" class="cr-crop-confirm" @click="applyCrop">
               <Check :size="15" /> Aplicar recorte
             </button>
-            <button type="button" class="wa-crop-cancel" @click="cancelCrop">
+            <button type="button" class="cr-crop-cancel" @click="cancelCrop">
               Cancelar recorte
             </button>
           </template>
         </div>
 
-        <div v-if="activeTool === 'text' && !showTextPrompt" class="wa-hint-text">
-          Haz clic en el punto de la imagen donde deseas insertar el texto.
+        <div v-if="activeTool === 'text' && !showTextPrompt" class="cr-hint-text">
+          Haz clic para agregar texto, o arrastra cualquier texto colocado para moverlo de lugar.
         </div>
       </div>
 
-      <!-- Barra flotante para escribir texto cuando el usuario hace clic en modo Texto -->
-      <div v-if="showTextPrompt" class="wa-text-prompt-bar">
+      <!-- Barra para escribir o editar un texto -->
+      <div v-if="showTextPrompt" class="cr-text-prompt-bar">
         <input
           ref="textInputRef"
           v-model="textInputValue"
           type="text"
-          class="wa-text-input"
+          class="cr-text-input"
           placeholder="Escribe el texto a insertar y presiona Enter..."
           @keydown.enter.prevent="confirmTextInsert"
           @keydown.esc.prevent="cancelTextInsert"
         />
-        <button type="button" class="wa-crop-confirm" @click="confirmTextInsert">
-          Insertar texto
+        <button type="button" class="cr-crop-confirm" @click="confirmTextInsert">
+          {{ editingExistingTextId !== null ? 'Actualizar texto' : 'Insertar texto' }}
         </button>
-        <button type="button" class="wa-crop-cancel" @click="cancelTextInsert">
+        <button type="button" class="cr-crop-cancel" @click="cancelTextInsert">
           Cancelar
         </button>
       </div>
 
       <!-- Área del lienzo (Canvas) -->
-      <div class="wa-canvas-stage">
-        <div v-if="isLoading" class="wa-status-msg">Cargando imagen...</div>
-        <div v-else-if="loadError" class="wa-status-msg error">{{ loadError }}</div>
+      <div class="cr-canvas-stage">
+        <div v-if="isLoading" class="cr-status-msg">Cargando imagen...</div>
+        <div v-else-if="loadError" class="cr-status-msg error">{{ loadError }}</div>
         <canvas
           v-show="!isLoading && !loadError"
           ref="canvasRef"
-          class="wa-canvas"
+          class="cr-canvas"
+          :class="{ 'cursor-move': hoveredTextId !== null || isDraggingText }"
           @pointerdown="onPointerDown"
           @pointermove="onPointerMove"
           @pointerup="onPointerUp"
+          @dblclick="editSelectedText"
         ></canvas>
       </div>
     </div>
@@ -945,51 +1256,52 @@
 </template>
 
 <style scoped>
-  .wa-editor-overlay {
+  .cr-editor-overlay {
     position: fixed;
     inset: 0;
     z-index: 99999;
-    background: rgba(11, 20, 26, 0.92);
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(3px);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 12px;
   }
 
-  .wa-editor-modal {
+  .cr-editor-modal {
     width: 100%;
     max-width: 1120px;
     height: 90vh;
     max-height: 860px;
-    background: #0b141a;
-    border: 1px solid #222e35;
+    background: #0f172a;
+    border: 1px solid #334155;
     border-radius: 12px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    box-shadow: 0 25px 50px -12px rgba(2, 6, 23, 0.75);
   }
 
-  .wa-toolbar {
-    background: #202c33;
-    color: #e9edef;
+  .cr-toolbar {
+    background: #1e293b;
+    color: #f8fafc;
     padding: 10px 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    border-bottom: 1px solid #2a3942;
+    border-bottom: 1px solid #334155;
     flex-wrap: wrap;
   }
 
-  .wa-toolbar-left,
-  .wa-toolbar-right {
+  .cr-toolbar-left,
+  .cr-toolbar-right {
     display: flex;
     align-items: center;
     gap: 8px;
   }
 
-  .wa-toolbar-center {
+  .cr-toolbar-center {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -997,11 +1309,11 @@
     justify-content: center;
   }
 
-  .wa-tool-btn,
-  .wa-icon-btn {
+  .cr-tool-btn,
+  .cr-icon-btn {
     background: transparent;
     border: 1px solid transparent;
-    color: #aebac1;
+    color: #cbd5e1;
     border-radius: 8px;
     padding: 7px 11px;
     font-size: 0.82rem;
@@ -1013,34 +1325,35 @@
     transition: all 0.15s ease;
   }
 
-  .wa-tool-btn:hover,
-  .wa-icon-btn:hover:not(:disabled) {
-    background: #2a3942;
+  .cr-tool-btn:hover,
+  .cr-icon-btn:hover:not(:disabled) {
+    background: #334155;
     color: #ffffff;
   }
 
-  .wa-tool-btn.active {
-    background: #00a884;
+  .cr-tool-btn.active {
+    background: #2563eb;
     color: #ffffff;
-    border-color: #00a884;
+    border-color: #3b82f6;
+    box-shadow: 0 1px 3px rgba(37, 99, 235, 0.35);
   }
 
-  .wa-icon-btn:disabled {
+  .cr-icon-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
   }
 
-  .wa-divider {
+  .cr-divider {
     width: 1px;
     height: 24px;
-    background: #3b4a54;
+    background: #475569;
     margin: 0 4px;
   }
 
-  .wa-save-btn {
-    background: #00a884;
+  .cr-save-btn {
+    background: #2563eb;
     color: #ffffff;
-    border: none;
+    border: 1px solid #3b82f6;
     border-radius: 8px;
     padding: 8px 16px;
     font-size: 0.88rem;
@@ -1052,46 +1365,47 @@
     transition: background 0.15s ease;
   }
 
-  .wa-save-btn:hover {
-    background: #029072;
+  .cr-save-btn:hover {
+    background: #1d4ed8;
   }
 
-  .wa-subbar {
-    background: #111b21;
-    color: #d1d7db;
+  .cr-subbar {
+    background: #0f172a;
+    color: #e2e8f0;
     padding: 8px 16px;
-    min-height: 44px;
+    min-height: 46px;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 18px;
-    border-bottom: 1px solid #222e35;
+    border-bottom: 1px solid #1e293b;
     flex-wrap: wrap;
   }
 
-  .wa-style-controls {
+  .cr-style-controls {
     display: flex;
     align-items: center;
     gap: 20px;
     flex-wrap: wrap;
   }
 
-  .wa-color-group,
-  .wa-size-group {
+  .cr-color-group,
+  .cr-size-group,
+  .cr-text-selected-actions {
     display: flex;
     align-items: center;
     gap: 8px;
   }
 
-  .wa-subbar-label {
+  .cr-subbar-label {
     font-size: 0.78rem;
-    color: #8696a0;
+    color: #94a3b8;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.4px;
   }
 
-  .wa-color-dot {
+  .cr-color-dot {
     width: 24px;
     height: 24px;
     border-radius: 50%;
@@ -1100,42 +1414,79 @@
     transition: transform 0.12s ease, border-color 0.12s ease;
   }
 
-  .wa-color-dot.selected {
+  .cr-color-dot.selected {
     transform: scale(1.2);
     border-color: #ffffff;
-    box-shadow: 0 0 0 2px #00a884;
+    box-shadow: 0 0 0 2px #2563eb;
   }
 
-  .wa-size-pill {
-    background: #202c33;
-    color: #aebac1;
-    border: 1px solid #2a3942;
+  .cr-size-pill {
+    background: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid #334155;
     border-radius: 6px;
     padding: 4px 10px;
     font-size: 0.78rem;
     cursor: pointer;
   }
 
-  .wa-size-pill.selected {
-    background: #2a3942;
+  .cr-size-pill.selected {
+    background: #2563eb;
     color: #ffffff;
-    border-color: #00a884;
+    border-color: #3b82f6;
   }
 
-  .wa-hint-text {
+  .cr-action-secondary {
+    background: #1e293b;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+  }
+
+  .cr-action-secondary:hover {
+    background: #334155;
+  }
+
+  .cr-action-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+  }
+
+  .cr-action-danger:hover {
+    background: #dc2626;
+    color: #ffffff;
+  }
+
+  .cr-hint-text {
     font-size: 0.82rem;
-    color: #8696a0;
+    color: #94a3b8;
   }
 
-  .wa-crop-actions {
+  .cr-crop-actions {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
   }
 
-  .wa-crop-confirm {
-    background: #00a884;
+  .cr-crop-confirm {
+    background: #2563eb;
     color: #ffffff;
     border: none;
     border-radius: 6px;
@@ -1148,9 +1499,13 @@
     cursor: pointer;
   }
 
-  .wa-crop-cancel {
-    background: #2a3942;
-    color: #e9edef;
+  .cr-crop-confirm:hover {
+    background: #1d4ed8;
+  }
+
+  .cr-crop-cancel {
+    background: #334155;
+    color: #f8fafc;
     border: none;
     border-radius: 6px;
     padding: 5px 12px;
@@ -1158,73 +1513,84 @@
     cursor: pointer;
   }
 
-  .wa-text-prompt-bar {
-    background: #182229;
+  .cr-crop-cancel:hover {
+    background: #475569;
+  }
+
+  .cr-text-prompt-bar {
+    background: #1e293b;
     padding: 8px 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    border-bottom: 1px solid #2a3942;
+    border-bottom: 1px solid #334155;
   }
 
-  .wa-text-input {
+  .cr-text-input {
     width: 100%;
     max-width: 420px;
-    background: #2a3942;
+    background: #0f172a;
     color: #ffffff;
-    border: 1px solid #3b4a54;
+    border: 1px solid #475569;
     border-radius: 6px;
     padding: 6px 12px;
     font-size: 0.88rem;
     outline: none;
   }
 
-  .wa-text-input:focus {
-    border-color: #00a884;
+  .cr-text-input:focus {
+    border-color: #3b82f6;
   }
 
-  .wa-canvas-stage {
+  .cr-canvas-stage {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 16px;
     overflow: hidden;
-    background: #0b141a;
+    background: #090e1a;
     position: relative;
   }
 
-  .wa-canvas {
+  .cr-canvas {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
     background: #ffffff;
-    border-radius: 4px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    border-radius: 6px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
     touch-action: none;
     cursor: crosshair;
   }
 
-  .wa-status-msg {
-    color: #aebac1;
+  .cr-canvas.cursor-move {
+    cursor: grab;
+  }
+
+  .cr-canvas.cursor-move:active {
+    cursor: grabbing;
+  }
+
+  .cr-status-msg {
+    color: #cbd5e1;
     font-size: 0.95rem;
   }
 
-  .wa-status-msg.error {
+  .cr-status-msg.error {
     color: #f87171;
   }
 
   @media (max-width: 768px) {
-    .wa-editor-modal {
+    .cr-editor-modal {
       height: 96vh;
       max-height: none;
     }
 
-    .wa-tool-btn span,
-    .wa-btn-label {
+    .cr-tool-btn span,
+    .cr-btn-label {
       display: none;
     }
   }
 </style>
-
