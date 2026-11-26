@@ -1242,7 +1242,7 @@
 
   // === Modal de Envío de Reporte por Correo ===
   // Control para mostrar u ocultar la funcionalidad de envío por correo
-  const ENABLE_EMAIL_FEATURE = false
+  const ENABLE_EMAIL_FEATURE = true
   const showEmailModal = ref(false)
   const isSendingEmail = ref(false)
   const emailRecipients = ref<string[]>([])

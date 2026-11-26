@@ -18,6 +18,7 @@
     Copy,
     Check,
     ExternalLink,
+    Send,
   } from 'lucide-vue-next'
 
   const authStore = useAuthStore()
@@ -429,8 +430,130 @@
     }
   }
 
+  // 2.c Configuración de Correo Saliente (SMTP) por Empresa
+  const smtpForm = ref({
+    smtp_activo: false,
+    smtp_host: '',
+    smtp_port: 587,
+    smtp_encryption: 'tls',
+    smtp_username: '',
+    smtp_password: '',
+    smtp_from_address: '',
+    smtp_from_name: '',
+    has_password: false,
+  })
+  const savingSmtp = ref(false)
+  const testingSmtp = ref(false)
+  const showSmtpPassword = ref(false)
+  const smtpTestFeedback = ref<{ ok: boolean; text: string } | null>(null)
+
+  const loadSmtp = async () => {
+    try {
+      const res = await client.get('/empresa/smtp').then(r => r.data)
+      const data = res?.data || res
+      if (data && typeof data === 'object') {
+        smtpForm.value.smtp_activo = Boolean(data.smtp_activo)
+        smtpForm.value.smtp_host = data.smtp_host || ''
+        smtpForm.value.smtp_port = Number(data.smtp_port) || 587
+        smtpForm.value.smtp_encryption = data.smtp_encryption || 'tls'
+        smtpForm.value.smtp_username = data.smtp_username || ''
+        smtpForm.value.smtp_from_address = data.smtp_from_address || data.smtp_username || ''
+        smtpForm.value.smtp_from_name = data.smtp_from_name || company.value?.nombre || ''
+        smtpForm.value.has_password = Boolean(data.has_password)
+        smtpForm.value.smtp_password = ''
+      }
+    } catch {
+      // Si aún no tiene configuración guardada
+    }
+  }
+
+  const saveSmtp = async () => {
+    if (savingSmtp.value) return
+    if (
+      smtpForm.value.smtp_activo &&
+      (!smtpForm.value.smtp_host.trim() ||
+        !smtpForm.value.smtp_username.trim() ||
+        (!smtpForm.value.smtp_password.trim() && !smtpForm.value.has_password))
+    ) {
+      toast.warning(
+        'Para activar el envío por SMTP completa Servidor (Host), Usuario y Contraseña.'
+      )
+      return
+    }
+    savingSmtp.value = true
+    smtpTestFeedback.value = null
+    try {
+      const payload: Record<string, any> = {
+        smtp_activo: smtpForm.value.smtp_activo,
+        smtp_host: smtpForm.value.smtp_host.trim(),
+        smtp_port: Number(smtpForm.value.smtp_port) || 587,
+        smtp_encryption: smtpForm.value.smtp_encryption,
+        smtp_username: smtpForm.value.smtp_username.trim(),
+        smtp_from_address:
+          smtpForm.value.smtp_from_address.trim() || smtpForm.value.smtp_username.trim(),
+        smtp_from_name:
+          smtpForm.value.smtp_from_name.trim() || company.value?.nombre || 'CoreReports',
+      }
+      if (smtpForm.value.smtp_password.trim()) {
+        payload.smtp_password = smtpForm.value.smtp_password.trim()
+      }
+      const res = await client.put('/empresa/smtp', payload).then(r => r.data)
+      const data = res?.data || res
+      if (data && typeof data === 'object') {
+        smtpForm.value.has_password = Boolean(data.has_password)
+        smtpForm.value.smtp_password = ''
+      }
+      toast.success(res?.message || 'Configuración SMTP guardada correctamente')
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'No se pudo guardar la configuración SMTP')
+    } finally {
+      savingSmtp.value = false
+    }
+  }
+
+  const testSmtpConnection = async () => {
+    if (testingSmtp.value) return
+    if (
+      !smtpForm.value.smtp_host.trim() ||
+      !smtpForm.value.smtp_username.trim() ||
+      (!smtpForm.value.smtp_password.trim() && !smtpForm.value.has_password)
+    ) {
+      toast.warning('Completa Servidor SMTP (Host), Usuario y Contraseña antes de probar.')
+      return
+    }
+    testingSmtp.value = true
+    smtpTestFeedback.value = null
+    try {
+      const payload: Record<string, any> = {
+        smtp_host: smtpForm.value.smtp_host.trim(),
+        smtp_port: Number(smtpForm.value.smtp_port) || 587,
+        smtp_encryption: smtpForm.value.smtp_encryption,
+        smtp_username: smtpForm.value.smtp_username.trim(),
+        smtp_from_address:
+          smtpForm.value.smtp_from_address.trim() || smtpForm.value.smtp_username.trim(),
+        smtp_from_name:
+          smtpForm.value.smtp_from_name.trim() || company.value?.nombre || 'CoreReports',
+      }
+      if (smtpForm.value.smtp_password.trim()) {
+        payload.smtp_password = smtpForm.value.smtp_password.trim()
+      }
+      const res = await client.post('/empresa/smtp/probar', payload).then(r => r.data)
+      const msg = res?.message || 'Conexión SMTP exitosa.'
+      smtpTestFeedback.value = { ok: true, text: msg }
+      toast.success(msg)
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.message || 'Falló la prueba de conexión SMTP. Verifica tus datos.'
+      smtpTestFeedback.value = { ok: false, text: msg }
+      toast.error(msg)
+    } finally {
+      testingSmtp.value = false
+    }
+  }
+
   onMounted(() => {
     loadCompany()
+    loadSmtp()
     loadUsers()
   })
 </script>
@@ -575,6 +698,181 @@
                 <strong class="text-slate-500 font-medium">Recomendado:</strong> 2560 × 1015 px (proporción horizontal 2.5:1) en PNG o JPG sin bordes vacíos para ajuste óptimo en PDF.
               </p>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION: Configuración de Correo Saliente (SMTP) -->
+      <section class="settings-section">
+        <div class="section-header">
+          <Mail class="text-blue-600" :size="20" />
+          <h3>Configuración de Correo Saliente (SMTP)</h3>
+        </div>
+
+        <div class="section-body card flex flex-col gap-5">
+          <div class="flex items-start justify-between flex-wrap gap-3 border-b border-slate-100 pb-4">
+            <div>
+              <label class="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  v-model="smtpForm.smtp_activo"
+                  type="checkbox"
+                  class="w-4 h-4 accent-blue-600 rounded cursor-pointer"
+                />
+                <span class="text-sm font-semibold text-slate-800">
+                  Habilitar envío de reportes desde el correo de nuestra empresa
+                </span>
+              </label>
+              <p class="text-xs text-slate-500 mt-1">
+                Configura el servidor SMTP de tu empresa para que los reportes en PDF salgan directamente desde tu dominio institucional.
+              </p>
+            </div>
+            <span
+              class="text-xs font-bold px-2.5 py-1 rounded-full"
+              :class="
+                smtpForm.smtp_activo
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-slate-100 text-slate-600'
+              "
+            >
+              {{ smtpForm.smtp_activo ? 'SMTP Activo' : 'SMTP Inactivo' }}
+            </span>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="form-group">
+              <label>Servidor SMTP (Host)</label>
+              <input
+                v-model="smtpForm.smtp_host"
+                type="text"
+                class="editable-input w-full"
+                placeholder="ej. smtp.gmail.com, smtp.ionos.mx"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Puerto</label>
+              <input
+                v-model.number="smtpForm.smtp_port"
+                type="number"
+                class="editable-input w-full"
+                placeholder="587"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Seguridad / Encriptación</label>
+              <select v-model="smtpForm.smtp_encryption" class="editable-input w-full">
+                <option value="tls">TLS / STARTTLS (Recomendado - Puerto 587)</option>
+                <option value="ssl">SSL (Puerto 465)</option>
+                <option value="none">Ninguna</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-group">
+              <label>Usuario / Correo Autenticación</label>
+              <input
+                v-model="smtpForm.smtp_username"
+                type="text"
+                class="editable-input w-full"
+                placeholder="reportes@tuempresa.com"
+              />
+            </div>
+
+            <div class="form-group">
+              <div class="flex items-center justify-between">
+                <label>Contraseña / App Password</label>
+                <span
+                  v-if="smtpForm.has_password && !smtpForm.smtp_password"
+                  class="text-[11px] font-semibold text-emerald-600"
+                >
+                  Contraseña guardada (cifrada)
+                </span>
+              </div>
+              <div class="relative flex items-center">
+                <input
+                  v-model="smtpForm.smtp_password"
+                  :type="showSmtpPassword ? 'text' : 'password'"
+                  class="editable-input w-full pr-10"
+                  :placeholder="
+                    smtpForm.has_password
+                      ? '•••••••••••• (dejar vacío para conservar la actual)'
+                      : 'Contraseña del correo o contraseña de aplicación'
+                  "
+                />
+                <button
+                  type="button"
+                  class="absolute right-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  @click="showSmtpPassword = !showSmtpPassword"
+                >
+                  <EyeOff v-if="showSmtpPassword" :size="16" />
+                  <Eye v-else :size="16" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-group">
+              <label>Correo Remitente (From Address)</label>
+              <input
+                v-model="smtpForm.smtp_from_address"
+                type="email"
+                class="editable-input w-full"
+                placeholder="reportes@tuempresa.com"
+              />
+              <span class="text-xs text-slate-400">
+                Dirección desde la que aparecerán enviados los reportes.
+              </span>
+            </div>
+
+            <div class="form-group">
+              <label>Nombre a mostrar (From Name)</label>
+              <input
+                v-model="smtpForm.smtp_from_name"
+                type="text"
+                class="editable-input w-full"
+                :placeholder="company.nombre || 'Nombre de tu empresa'"
+              />
+              <span class="text-xs text-slate-400">
+                Ej: {{ company.nombre || 'Mi Empresa' }} - Control de Mantenimiento
+              </span>
+            </div>
+          </div>
+
+          <div
+            v-if="smtpTestFeedback"
+            class="rounded-lg p-3 text-xs font-medium border"
+            :class="
+              smtpTestFeedback.ok
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                : 'bg-red-50 border-red-200 text-red-800'
+            "
+          >
+            {{ smtpTestFeedback.text }}
+          </div>
+
+          <div class="flex items-center gap-3 flex-wrap pt-1">
+            <button
+              type="button"
+              class="btn-primary flex items-center gap-2"
+              :disabled="savingSmtp"
+              @click="saveSmtp"
+            >
+              <Save :size="16" />
+              <span>{{ savingSmtp ? 'Guardando...' : 'Guardar Configuración SMTP' }}</span>
+            </button>
+
+            <button
+              type="button"
+              class="btn-outline flex items-center gap-2"
+              :disabled="testingSmtp"
+              @click="testSmtpConnection"
+            >
+              <Send :size="15" />
+              <span>{{ testingSmtp ? 'Probando conexión...' : 'Probar Conexión SMTP' }}</span>
+            </button>
           </div>
         </div>
       </section>
