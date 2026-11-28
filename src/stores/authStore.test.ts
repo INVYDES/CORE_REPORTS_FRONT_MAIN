@@ -17,6 +17,21 @@ describe('authStore', () => {
     localStorage.clear()
   })
 
+  it('fetchMe no cierra la sesión por un error de red o 500', async () => {
+    const client = (await import('../api/client')).default as any
+    sessionStorage.setItem('token', 'tok')
+    sessionStorage.setItem('user', JSON.stringify({ id: 1, rol: 1, email: 'a@b.com' }))
+    const store = useAuthStore()
+
+    client.get.mockRejectedValueOnce({ response: { status: 500 } })
+    await store.fetchMe()
+    expect(store.isAuthenticated).toBe(true)
+
+    client.get.mockRejectedValueOnce({ response: { status: 401 } })
+    await store.fetchMe()
+    expect(store.isAuthenticated).toBe(false)
+  })
+
   it('inicia sin usuario', () => {
     const store = useAuthStore()
     expect(store.isAuthenticated).toBe(false)
@@ -45,8 +60,9 @@ describe('authStore', () => {
     expect(store.isAuthenticated).toBe(true)
     expect(sessionStorage.getItem('token')).toBe('abc123')
     expect(sessionStorage.getItem('user')).toContain('a@b.com')
-    // Verifica que se haya creado la cookie JWT
-    expect(document.cookie).toContain('jwt=abc123')
+    // Cookie indicadora para el worker: existe pero no contiene el token
+    expect(document.cookie).toContain('jwt=1')
+    expect(document.cookie).not.toContain('abc123')
     // Ahora logout
     await store.logout()
     expect(store.isAuthenticated).toBe(false)

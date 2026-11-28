@@ -26,8 +26,9 @@ export interface VerificacionPendiente {
 
 export type LoginResponse = UsuarioReal | VerificacionPendiente
 
-export const esVerificacionPendiente = (respuesta: LoginResponse): respuesta is VerificacionPendiente =>
-  'requiere_verificacion' in respuesta
+export const esVerificacionPendiente = (
+  respuesta: LoginResponse
+): respuesta is VerificacionPendiente => 'requiere_verificacion' in respuesta
 
 /** Roles del dominio (espejo del enum RolUsuario del backend). */
 export const ROLES = {
@@ -86,10 +87,11 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = tkn
     setSession(tkn, user)
     setTokenHeader(tkn)
-    // Set JWT cookie for edge workers detection (Secure, SameSite=Strict)
+    // Cookie indicadora para el worker de Cloudflare: solo comprueba que exista,
+    // así que no se guarda el token (una cookie legible por JS lo expondría).
     try {
       const secure = window.location.protocol === 'https:' ? '; Secure' : ''
-      document.cookie = `jwt=${tkn}; Path=/; SameSite=Strict${secure}`
+      document.cookie = `jwt=1; Path=/; SameSite=Strict${secure}`
     } catch (e) {
       console.warn('Unable to set JWT cookie', e)
     }
@@ -176,8 +178,10 @@ export const useAuthStore = defineStore('auth', () => {
       currentUser.value = data
       setSession(token.value, data)
       return data
-    } catch {
-      clearAuth()
+    } catch (e: any) {
+      // Solo un 401 significa que la sesión ya no es válida. Un 500 o un corte
+      // de red no deben cerrar la sesión del usuario.
+      if (e?.response?.status === 401) clearAuth()
       return null
     }
   }

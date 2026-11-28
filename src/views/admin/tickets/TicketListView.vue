@@ -13,6 +13,9 @@
   const { currentUser } = storeToRefs(authStore)
 
   import client from '../../../api/client'
+  import { getAllPages } from '../../../api/paginate'
+  import { usePaginacion } from '../../../composables/usePaginacion'
+  import ListPagination from '../../../components/shared/ListPagination.vue'
   import { useToast } from 'vue-toastification'
 
   import type { Ticket } from '../../../data/mockTickets'
@@ -89,14 +92,12 @@
 
   const fetchTickets = async () => {
     try {
-      const params: Record<string, unknown> = { per_page: 100 }
+      const params: Record<string, unknown> = {}
       if (areaId.value) params.area_id = areaId.value
       const [res, repRes] = await Promise.all([
-        client.get('/tickets', { params }).then(r => r.data),
-        client
-          .get('/reportes', { params: { per_page: 100 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
+        getAllPages('/tickets', params),
+        // Solo hacen falta los reportes finalizados para marcar el origen como resuelto.
+        getAllPages('/reportes', { estatus: 'finalizado', ligero: 1 }).catch(() => ({ data: [] })),
       ])
       const list = res.data || res
       const repList = repRes.data || repRes || []
@@ -187,6 +188,8 @@
   })
 
   // ACtive filters
+  const paginacion = usePaginacion(filteredTickets)
+
   const hasActiveFilters = computed(() => {
     return (
       searchQuery.value !== '' ||
@@ -355,7 +358,7 @@
 
         <tbody>
           <tr
-            v-for="ticket in filteredTickets"
+            v-for="ticket in paginacion.visibles.value"
             :key="ticket.id"
             class="ticket-row"
             :class="getStatusInfo(ticket).borderClass"
@@ -412,6 +415,16 @@
       <div v-if="filteredTickets.length === 0" class="p-12 text-center text-slate-500 italic">
         No se encontraron tickets con esos filtros...
       </div>
+
+      <ListPagination
+        :pagina="paginacion.pagina.value"
+        :total-paginas="paginacion.totalPaginas.value"
+        :total="paginacion.total.value"
+        :desde="paginacion.desde.value"
+        :hasta="paginacion.hasta.value"
+        etiqueta="tickets"
+        @ir="paginacion.irA"
+      />
     </div>
 
     <Teleport to="body">

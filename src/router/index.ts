@@ -118,6 +118,8 @@ const router = createRouter({
       component: AppLayout,
       meta: { requiresAuth: true },
       children: [
+        // /app sin subruta mostraba el layout vacío.
+        { path: '', redirect: { name: 'dashboard' } },
         {
           path: 'dashboard',
           name: 'dashboard',

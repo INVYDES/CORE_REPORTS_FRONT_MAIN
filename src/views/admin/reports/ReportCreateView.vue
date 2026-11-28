@@ -11,10 +11,9 @@
   const { currentUser } = storeToRefs(authStore)
 
   import type { ReporteMaterial, EvidenciaFotografica } from '../../../data/mockReportes'
-  import { ticketsApi } from '../../../api/tickets'
-  import { serviciosApi } from '../../../api/servicios'
   import { areasApi } from '../../../api/areas'
   import client from '../../../api/client'
+  import { getAllPages } from '../../../api/paginate'
   import { calcNetHoursText, calcDragHoursText } from '../../../utils/reportMeta'
   import { useToast } from 'vue-toastification'
   import {
@@ -236,14 +235,14 @@
       /* no-op */
     }
     try {
-      const t = await ticketsApi.list({ per_page: 100 })
+      const t = await getAllPages('/tickets')
       const list = t.data || t
       availableTicketsReal.value = Array.isArray(list) ? list : []
     } catch {
       /* no-op */
     }
     try {
-      const s = await serviciosApi.list({ per_page: 100 })
+      const s = await getAllPages('/servicios')
       const list = s.data || s
       availableServicesReal.value = Array.isArray(list) ? list : []
     } catch {

@@ -16,7 +16,8 @@
   const esperar = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
   const verificar = async () => {
-    const paymentId = route.query.payment_id || route.query.collection_id
+    const rawId = route.query.payment_id || route.query.collection_id
+    const paymentId = String(Array.isArray(rawId) ? rawId[0] : rawId || '').trim()
 
     if (!paymentId) {
       estado.value = 'pendiente'
@@ -25,7 +26,7 @@
 
     for (let intento = 0; intento < 10; intento++) {
       try {
-        const { data } = await client.get(`/licencias/verificar-pago/${paymentId}`)
+        const { data } = await client.get(`/licencias/verificar-pago/${encodeURIComponent(paymentId)}`)
         const pago = data?.data
 
         if (pago?.approved) {

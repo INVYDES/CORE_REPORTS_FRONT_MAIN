@@ -1,4 +1,12 @@
 <script setup lang="ts">
+  // Escapa texto para HTML, incluido dentro de atributos (src="...").
+  const escapeHtml = (v: unknown) =>
+    String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
   import { ref, onMounted, reactive, computed, watch } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { useToast } from 'vue-toastification'
@@ -19,6 +27,7 @@
 
   // Import Data
   import client from '../../../api/client'
+  import { getAllPages } from '../../../api/paginate'
   import { downloadBlob } from '../../../utils/download'
   import {
     packReportDesarrollo,
@@ -195,7 +204,7 @@
       console.error('Error cargando técnicos:', err)
     }
     try {
-      const res = await client.get('/areas', { params: { per_page: 100 } }).then(r => r.data)
+      const res = await getAllPages('/areas')
       const list = res.data || res || []
       if (Array.isArray(list)) areas.value = list
     } catch {
@@ -647,7 +656,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>${report.value.folio || 'Reporte'}</title>
+  <title>${escapeHtml(report.value.folio || 'Reporte')}</title>
   <style>
     @page { size: portrait; margin: 8mm; }
     * { box-sizing: border-box; }
@@ -676,11 +685,7 @@
 
   const buildPrintableReportHtml = () => {
     const r = report.value
-    const esc = (v: any) =>
-      String(v ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
+    const esc = escapeHtml
 
     const formatParagraphsHtml = (text?: string | null, fallback = 'Sin información.') => {
       const list = splitParagraphs(text)

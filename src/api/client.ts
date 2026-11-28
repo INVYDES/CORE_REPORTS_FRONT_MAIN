@@ -36,12 +36,16 @@ function forzarLogout(): void {
   window.dispatchEvent(new CustomEvent('auth:expirado'))
 }
 
-function normalizeFoliosInPayload(val: any): any {
+// Solo se reescriben campos de folio (folio, originFolio, ...): antes se tocaba
+// cualquier texto de la respuesta (descripciones, nombres de archivo, URLs).
+const esCampoFolio = (key?: string) => !!key && /folio/i.test(key)
+
+function normalizeFoliosInPayload(val: any, key?: string): any {
   if (typeof val === 'string') {
-    return val.replace(/\b(TKT|REP|SRV)-20(\d{2}\d*-)/gi, '$1-$2')
+    return esCampoFolio(key) ? val.replace(/\b(TKT|REP|SRV)-20(\d{2}\d*-)/gi, '$1-$2') : val
   }
   if (Array.isArray(val)) {
-    return val.map(normalizeFoliosInPayload)
+    return val.map(item => normalizeFoliosInPayload(item, key))
   }
   if (
     val !== null &&
@@ -51,7 +55,7 @@ function normalizeFoliosInPayload(val: any): any {
   ) {
     const out: Record<string, any> = {}
     for (const k of Object.keys(val)) {
-      out[k] = normalizeFoliosInPayload(val[k])
+      out[k] = normalizeFoliosInPayload(val[k], k)
     }
     return out
   }

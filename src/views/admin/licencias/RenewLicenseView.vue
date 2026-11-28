@@ -11,7 +11,7 @@
 
   const router = useRouter()
   const auth = useAuthStore()
-  const { currentUser, isLicenciaVencida } = storeToRefs(auth)
+  const { currentUser, isLicenciaVencida, isAdmin } = storeToRefs(auth)
   const toast = useToast()
 
   const licencias = ref<any[]>([])
@@ -91,7 +91,10 @@
     }
   }
 
-  onMounted(loadPlanes)
+  onMounted(() => {
+    if (isAdmin.value) loadPlanes()
+    else loading.value = false
+  })
 </script>
 
 <template>
@@ -123,9 +126,22 @@
       </div>
     </section>
 
-    <h2 class="section-title">Renueva o cambia de plan</h2>
+    <template v-if="isAdmin">
+      <h2 class="section-title">Renueva o cambia de plan</h2>
 
-    <PricingPlans :cargando="loading" :comprando="comprando" modo="licencia" @select="comprar" />
+      <PricingPlans :cargando="loading" :comprando="comprando" modo="licencia" @select="comprar" />
+    </template>
+
+    <section v-else class="current-card">
+      <div class="current-info">
+        <span class="label">Solo administradores</span>
+        <h2>Pide a un administrador que renueve el plan</h2>
+        <p>
+          Solo los administradores de tu empresa pueden renovar o cambiar la licencia. Cuando la
+          renueven, vuelve a iniciar sesión para seguir trabajando.
+        </p>
+      </div>
+    </section>
 
     <p class="note">
       El cobro se realiza con Mercado Pago. Al aprobarse el pago, tu licencia se activa

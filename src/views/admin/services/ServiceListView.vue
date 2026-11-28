@@ -5,7 +5,9 @@
   import { useAuthStore } from '../../../stores/authStore'
   import { storeToRefs } from 'pinia'
 
-  import client from '../../../api/client'
+  import { getAllPages } from '../../../api/paginate'
+  import { usePaginacion } from '../../../composables/usePaginacion'
+  import ListPagination from '../../../components/shared/ListPagination.vue'
   import { stripUtcSuffix, parseLocalDate } from '../../../utils/reportMeta'
   import { useToast } from 'vue-toastification'
   import AreaFilterBanner from '../../../components/shared/AreaFilterBanner.vue'
@@ -44,14 +46,12 @@
 
   const fetchServices = async () => {
     try {
-      const params: Record<string, unknown> = { per_page: 100 }
+      const params: Record<string, unknown> = {}
       if (areaId.value) params.area_id = areaId.value
       const [res, repRes] = await Promise.all([
-        client.get('/servicios', { params }).then(r => r.data),
-        client
-          .get('/reportes', { params: { per_page: 100 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
+        getAllPages('/servicios', params),
+        // Solo hacen falta los reportes finalizados para marcar el origen como resuelto.
+        getAllPages('/reportes', { estatus: 'finalizado', ligero: 1 }).catch(() => ({ data: [] })),
       ])
       const list = res.data || res
       const repList = repRes.data || repRes || []
@@ -150,6 +150,8 @@
   })
 
   // Active filters OKKK
+  const paginacion = usePaginacion(filteredServices)
+
   const hasActiveFilters = computed(() => {
     return searchQuery.value !== '' || statusFilter.value !== '' || dateFilter.value !== ''
   })
@@ -284,7 +286,7 @@
         <!-- Body -->
         <tbody>
           <tr
-            v-for="service in filteredServices"
+            v-for="service in paginacion.visibles.value"
             :key="service.id"
             class="ticket-row"
             :class="getStatusInfo(service).borderClass"
@@ -346,6 +348,16 @@
       <div v-if="filteredServices.length === 0" class="empty-state">
         No se encontraron servicios con esos filtros...
       </div>
+
+      <ListPagination
+        :pagina="paginacion.pagina.value"
+        :total-paginas="paginacion.totalPaginas.value"
+        :total="paginacion.total.value"
+        :desde="paginacion.desde.value"
+        :hasta="paginacion.hasta.value"
+        etiqueta="servicios"
+        @ir="paginacion.irA"
+      />
     </div>
   </div>
 </template>

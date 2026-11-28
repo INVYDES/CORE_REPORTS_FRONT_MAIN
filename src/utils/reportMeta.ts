@@ -66,6 +66,20 @@ export function stripUtcSuffix(val?: string | null): string {
     .replace(/Z$/i, '')
 }
 
+/**
+ * created_at / updated_at sí son UTC reales (Laravel con APP_TIMEZONE=UTC), a
+ * diferencia de fecha_solicitud, fecha_inicio, etc., que se guardan en hora
+ * local. Para esos campos hay que convertir a hora local, no quitar la Z.
+ * Devuelve 'YYYY-MM-DDTHH:mm:ss' en la zona del navegador.
+ */
+export function utcALocal(val?: string | null): string {
+  if (!val) return ''
+  const d = new Date(String(val).trim())
+  if (Number.isNaN(d.getTime())) return stripUtcSuffix(val)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
 export function parseLocalDate(val?: string | null): Date | null {
   const clean = stripUtcSuffix(val)
   if (!clean) return null
@@ -157,5 +171,3 @@ export function calcDragHoursText(
   const m = totalMinutes % 60
   return `${h}h ${m}m`
 }
-
-

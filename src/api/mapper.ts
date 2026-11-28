@@ -1,4 +1,5 @@
 import { packReportDesarrollo } from '../utils/reportMeta'
+import { getAllPages } from './paginate'
 
 type BackendPayload = Record<string, any>
 
@@ -107,7 +108,8 @@ export function mapTicketForBackend(front: any): BackendPayload {
     area_id: front.area_id ?? front.idSubdependencia ?? null,
     equipo_id: front.equipo_id ?? null,
     fecha_limite: front.fecha_limite ? toMysqlDatetime(front.fecha_limite) : null,
-    evidencias: Array.isArray(front.evidencias) && front.evidencias.length > 0 ? front.evidencias : undefined,
+    evidencias:
+      Array.isArray(front.evidencias) && front.evidencias.length > 0 ? front.evidencias : undefined,
   }
   return clean(raw)
 }
@@ -231,8 +233,8 @@ export async function buildReporteFormData(mapped: BackendPayload, client: any):
 
   if (mapped._materialesRaw && mapped._materialesRaw.length) {
     try {
-      const catRes = await client.get('/materiales', { params: { per_page: 100 } })
-      const cat = catRes.data?.data || catRes.data || []
+      // Catálogo completo: con más de 100 materiales la primera página no basta.
+      const cat = (await getAllPages('/materiales', {}, client)).data
       let idx = 0
       mapped._materialesRaw.forEach((m: any) => {
         const found = Array.isArray(cat)

@@ -4,7 +4,8 @@
   import { useAuthStore } from '../../stores/authStore'
   import { storeToRefs } from 'pinia'
   import client from '../../api/client'
-  import { unpackReportDesarrollo, stripUtcSuffix } from '../../utils/reportMeta'
+  import { getAllPages } from '../../api/paginate'
+  import { unpackReportDesarrollo, stripUtcSuffix, utcALocal } from '../../utils/reportMeta'
   import { onMounted } from 'vue'
   import {
     ChevronLeft,
@@ -29,18 +30,9 @@
   onMounted(async () => {
     try {
       const [tRes, sRes, rRes, uRes] = await Promise.all([
-        client
-          .get('/tickets', { params: { per_page: 100 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
-        client
-          .get('/servicios', { params: { per_page: 100 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
-        client
-          .get('/reportes', { params: { per_page: 100 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
+        getAllPages('/tickets').catch(() => ({ data: [] })),
+        getAllPages('/servicios').catch(() => ({ data: [] })),
+        getAllPages('/reportes').catch(() => ({ data: [] })),
         client
           .get('/tecnicos')
           .then(r => r.data)
@@ -229,8 +221,9 @@
           status: effectiveStatus,
           type: 'Ticket' as const,
           route: 'ticket-detail',
-          dateStr: stripUtcSuffix(
-            String(t.fecha_solicitud || t.fechaSolicitud || t.created_at || '')
+          dateStr: (t.fecha_solicitud || t.fechaSolicitud
+            ? stripUtcSuffix(String(t.fecha_solicitud || t.fechaSolicitud))
+            : utcALocal(t.created_at)
           ).slice(0, 10),
         }
       })
@@ -266,10 +259,11 @@
           status: effectiveStatus,
           type: 'Servicio' as const,
           route: 'service-detail',
-          dateStr: stripUtcSuffix(
-            String(
-              s.fecha_vencimiento || s.fechaVencimiento || s.fecha_asignacion || s.created_at || ''
-            )
+          dateStr: (s.fecha_vencimiento || s.fechaVencimiento || s.fecha_asignacion
+            ? stripUtcSuffix(
+                String(s.fecha_vencimiento || s.fechaVencimiento || s.fecha_asignacion)
+              )
+            : utcALocal(s.created_at)
           ).slice(0, 10),
         }
       })
@@ -294,9 +288,10 @@
         const workerName = creator
           ? `${creator.nombre} ${creator.apellidos || ''}`.trim()
           : 'Usuario Desconocido'
-        const rawDate = stripUtcSuffix(
-          String(r.fecha_inicio || r.fechaElaboracion || r.created_at || '')
-        )
+        const rawDate =
+          r.fecha_inicio || r.fechaElaboracion
+            ? stripUtcSuffix(String(r.fecha_inicio || r.fechaElaboracion))
+            : utcALocal(r.created_at)
         const unpacked = unpackReportDesarrollo(
           r.desarrollo || r.desarrolloActividades || r.fallaReportada || ''
         )

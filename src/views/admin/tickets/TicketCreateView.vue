@@ -6,6 +6,7 @@
   const props = defineProps<{ isModal?: boolean }>()
   const emit = defineEmits<{ (e: 'close'): void; (e: 'created'): void }>()
   import { ticketsApi } from '../../../api/tickets'
+  import { esHeic, imagenADataUrl } from '../../../utils/imageUpload'
   import { areasApi } from '../../../api/areas'
   import { useToast } from 'vue-toastification'
   import { useAuthStore } from '../../../stores/authStore'
@@ -38,6 +39,8 @@
   })
 
   const isSubmitting = ref(false)
+  // Conversión HEIC en curso: se bloquea el envío para no crear el ticket sin la foto.
+  const procesandoFoto = ref(false)
   const esAreaManual = ref(false)
   const formData = ref({
     area_id: null as number | null,
@@ -69,10 +72,28 @@
   const fileInput = ref<HTMLInputElement | null>(null)
   const showPhotoEditor = ref(false)
 
-  const handlePhotoSelect = (event: Event) => {
+  const handlePhotoSelect = async (event: Event) => {
     const target = event.target as HTMLInputElement
     if (target.files && target.files[0]) {
-      const file = target.files[0]
+      let file = target.files[0]
+      // Solo Safari muestra HEIC: se convierte a JPEG al elegirla para que la
+      // vista previa y el editor funcionen en cualquier navegador.
+      if (esHeic(file)) {
+        procesandoFoto.value = true
+        try {
+          const dataUrl = await imagenADataUrl(file)
+          const blob = await (await fetch(dataUrl)).blob()
+          file = new File([blob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), {
+            type: blob.type || 'image/jpeg',
+          })
+        } catch {
+          toast.error('No se pudo procesar la foto. Usa una imagen JPG, PNG o WEBP.')
+          target.value = ''
+          return
+        } finally {
+          procesandoFoto.value = false
+        }
+      }
       if (photoPreview.value && photoPreview.value.startsWith('blob:')) {
         URL.revokeObjectURL(photoPreview.value)
       }
@@ -104,15 +125,6 @@
     toast.success('Imagen editada lista para enviar')
   }
 
-  const fileToDataUrl = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = evt => resolve(String(evt.target?.result || ''))
-      reader.onerror = err => reject(err)
-      reader.readAsDataURL(file)
-    })
-  }
-
   const handleBack = () => {
     if (props.isModal) emit('close')
     else if (window.history.length > 1) router.back()
@@ -121,6 +133,10 @@
 
   const submitTicket = async () => {
     if (isSubmitting.value) return
+    if (procesandoFoto.value) {
+      toast.warning('Espera a que termine de procesarse la foto')
+      return
+    }
     const lugarManual = formData.value.area_texto.trim()
     if (esAreaManual.value && !lugarManual) {
       toast.warning('Escribe el nombre del área o ubicación externa')
@@ -146,8 +162,13 @@
 
       const evidencias: string[] = []
       if (photoFile.value) {
-        const b64 = await fileToDataUrl(photoFile.value)
-        if (b64) evidencias.push(b64)
+        try {
+          // Convierte HEIC/GIF/etc. a JPEG: el backend solo guarda JPEG, PNG y WEBP.
+          evidencias.push(await imagenADataUrl(photoFile.value))
+        } catch {
+          toast.error('No se pudo procesar la foto. Usa una imagen JPG, PNG o WEBP.')
+          return
+        }
       }
 
       const payload: any = {
@@ -335,7 +356,7 @@
           <!-- File/photography file-->
           <input
             type="file"
-            accept="image/*"
+            accept="image/*,.heic,.heif"
             capture="environment"
             ref="fileInput"
             @change="handlePhotoSelect"
@@ -385,8 +406,8 @@
             <ArrowLeft :size="18" style="margin-right: 8px" />
             Regresar
           </button>
-          <button type="submit" class="btn-enviar" :disabled="isSubmitting">
-            {{ isSubmitting ? 'Creando...' : 'Crear Ticket' }}
+          <button type="submit" class="btn-enviar" :disabled="isSubmitting || procesandoFoto">
+            {{ isSubmitting ? 'Creando...' : procesandoFoto ? 'Procesando foto...' : 'Crear Ticket' }}
           </button>
         </div>
       </form>

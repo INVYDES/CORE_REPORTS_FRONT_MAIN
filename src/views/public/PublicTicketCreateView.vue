@@ -17,6 +17,7 @@ import {
   Pencil,
 } from 'lucide-vue-next'
 import client from '../../api/client'
+import { esHeic, imagenADataUrl } from '../../utils/imageUpload'
 import EvidenceImageEditorModal from '../../components/shared/EvidenceImageEditorModal.vue'
 
 const route = useRoute()
@@ -47,6 +48,9 @@ const form = reactive({
 })
 
 const isSubmitting = ref(false)
+// Fotos que se están convirtiendo (HEIC puede tardar unos segundos): no se
+// permite enviar mientras tanto, o el ticket saldría sin esas fotos.
+const procesandoFotos = ref(0)
 const submitError = ref<string | null>(null)
 
 // Estado de éxito
@@ -98,24 +102,27 @@ const handleFileSelect = (e: Event) => {
   const files = Array.from(input.files).slice(0, remainingSlots)
 
   files.forEach(file => {
-    if (!file.type.startsWith('image/')) {
+    // Las fotos HEIC de iPhone suelen llegar sin `type` en Windows/Chrome.
+    if (!file.type.startsWith('image/') && !esHeic(file)) {
       alert(`El archivo ${file.name} no es una imagen válida.`)
       return
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert(`La imagen ${file.name} excede el límite de 5 MB.`)
-      return
-    }
-
-    const reader = new FileReader()
-    reader.onload = evt => {
-      const b64 = evt.target?.result as string
-      if (b64 && form.evidencias.length < 3) {
-        form.evidencias.push(b64)
-      }
-    }
-    reader.readAsDataURL(file)
+    // Convierte HEIC/GIF/etc. a JPEG y reduce las fotos grandes: el backend
+    // solo guarda JPEG, PNG y WEBP de hasta 5 MB.
+    procesandoFotos.value++
+    imagenADataUrl(file)
+      .then(b64 => {
+        if (b64 && form.evidencias.length < 3) {
+          form.evidencias.push(b64)
+        }
+      })
+      .catch(() => {
+        alert(`No se pudo procesar la imagen ${file.name}. Usa una foto JPG, PNG o WEBP.`)
+      })
+      .finally(() => {
+        procesandoFotos.value--
+      })
   })
 
   input.value = ''
@@ -140,21 +147,29 @@ const openPublicPhotoEditor = (index: number) => {
 const onPublicPhotoEdited = ({ file, blobUrl }: { file: File; blobUrl: string }) => {
   const idx = editingPublicPhotoIdx.value
   if (idx === null) return
-  const reader = new FileReader()
-  reader.onload = evt => {
-    const b64 = evt.target?.result as string
-    if (b64) {
-      form.evidencias[idx] = b64
-    }
-    if (blobUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(blobUrl)
-    }
-  }
-  reader.readAsDataURL(file)
+  procesandoFotos.value++
+  imagenADataUrl(file)
+    .then(b64 => {
+      if (b64) form.evidencias[idx] = b64
+    })
+    .catch(() => {
+      alert('No se pudo procesar la imagen editada.')
+    })
+    .finally(() => {
+      procesandoFotos.value--
+      if (blobUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(blobUrl)
+      }
+    })
 }
 
 const submitTicket = async () => {
   submitError.value = null
+
+  if (procesandoFotos.value > 0) {
+    submitError.value = 'Espera a que terminen de cargarse las fotos.'
+    return
+  }
 
   if (!form.lugar.trim()) {
     submitError.value = 'Por favor escribe el nombre del lugar, sucursal o cliente.'
@@ -495,10 +510,10 @@ onMounted(() => {
               <label class="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg py-4 px-4 cursor-pointer transition-colors text-center">
                 <Camera :size="24" class="text-slate-400 mb-1" />
                 <span class="text-xs font-semibold text-blue-700">Tomar foto o adjuntar archivo</span>
-                <span class="text-[10px] text-slate-400 mt-0.5">JPG, PNG o WebP (máx. 5 MB por foto)</span>
+                <span class="text-[10px] text-slate-400 mt-0.5">JPG, PNG, WebP o HEIC (se reducen si pesan más de 5 MB)</span>
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   capture="environment"
                   multiple
                   @change="handleFileSelect"
@@ -540,11 +555,17 @@ onMounted(() => {
           <div class="pt-4 border-t border-slate-100">
             <button
               type="submit"
-              :disabled="isSubmitting"
+              :disabled="isSubmitting || procesandoFotos > 0"
               class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Loader2 v-if="isSubmitting" class="animate-spin" :size="18" />
-              <span>{{ isSubmitting ? 'Enviando solicitud...' : 'Enviar Solicitud de Servicio' }}</span>
+              <span>{{
+                isSubmitting
+                  ? 'Enviando solicitud...'
+                  : procesandoFotos > 0
+                    ? 'Procesando fotos...'
+                    : 'Enviar Solicitud de Servicio'
+              }}</span>
             </button>
             <p class="text-[11px] text-center text-slate-400 mt-2">
               Al enviar tu solicitud, el personal de {{ empresa?.nombre }} recibirá una notificación de inmediato.

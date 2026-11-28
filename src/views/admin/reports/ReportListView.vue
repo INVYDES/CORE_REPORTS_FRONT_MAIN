@@ -11,12 +11,16 @@
   const { currentUser } = storeToRefs(authStore)
 
   import client from '../../../api/client'
+  import { getAllPages } from '../../../api/paginate'
+  import { usePaginacion } from '../../../composables/usePaginacion'
+  import ListPagination from '../../../components/shared/ListPagination.vue'
   import { downloadBlob } from '../../../utils/download'
   import {
     unpackReportDesarrollo,
     formatLocalDateShort,
     formatLocalDateOnly,
     parseLocalDate,
+    utcALocal,
   } from '../../../utils/reportMeta'
   import { Star, FileDown } from 'lucide-vue-next'
   import { useToast } from 'vue-toastification'
@@ -155,9 +159,9 @@
 
   const loadReports = async () => {
     try {
-      const params: Record<string, unknown> = { per_page: 100 }
+      const params: Record<string, unknown> = {}
       if (areaId.value) params.area_id = areaId.value
-      const res = await client.get('/reportes', { params }).then(r => r.data)
+      const res = await getAllPages('/reportes', params)
       const list = res.data || res || []
       reports.value = (Array.isArray(list) ? list : []).map((x: any) => {
         const origen = x.ticket || x.servicio || null
@@ -170,7 +174,7 @@
           origenDatosId: x.ticket_id ?? x.servicio_id ?? null,
           originFolio: origen?.folio || '',
           originAsunto: origen?.asunto || '',
-          fechaRaw: String(x.fecha_inicio || x.created_at || '').slice(0, 10),
+          fechaRaw: String(x.fecha_inicio || utcALocal(x.created_at)).slice(0, 10),
           fechaElaboracion: fmtShort(x.fecha_inicio),
           desarrolloActividades: unpackReportDesarrollo(x.desarrollo || '').text,
           estatusReporte: estatusLabel(x.estatus),
@@ -194,7 +198,7 @@
 
   const loadSurveys = async () => {
     try {
-      const res = await client.get('/encuestas', { params: { per_page: 100 } }).then(r => r.data)
+      const res = await getAllPages('/encuestas')
       const list = res.data || res || []
       if (Array.isArray(list)) surveyIds.value = new Set(list.map((e: any) => e.reporte_id))
     } catch {
@@ -286,6 +290,8 @@
         })
     )
   })
+
+  const paginacion = usePaginacion(filteredReports)
 </script>
 <!------------------------------------------------------------------------------------------------------------------>
 <template>
@@ -363,7 +369,7 @@
 
       <!-- Table Filtered reports-->
       <div
-        v-for="report in filteredReports"
+        v-for="report in paginacion.visibles.value"
         :key="report.idReporte"
         class="list-item cursor-pointer"
         @click="router.push({ name: 'report-detail', params: { id: report.idReporte } })"
@@ -445,6 +451,16 @@
           </button>
         </div>
       </div>
+
+      <ListPagination
+        :pagina="paginacion.pagina.value"
+        :total-paginas="paginacion.totalPaginas.value"
+        :total="paginacion.total.value"
+        :desde="paginacion.desde.value"
+        :hasta="paginacion.hasta.value"
+        etiqueta="reportes"
+        @ir="paginacion.irA"
+      />
     </div>
   </div>
 </template>

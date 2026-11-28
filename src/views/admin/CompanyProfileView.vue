@@ -3,6 +3,7 @@
   import { useAuthStore } from '../../stores/authStore'
   import { storeToRefs } from 'pinia'
   import client from '../../api/client'
+  import { getAllPages } from '../../api/paginate'
   import { useToast } from 'vue-toastification'
   import {
     Building2,
@@ -195,7 +196,7 @@
 
   const loadUsers = async () => {
     try {
-      const res = await client.get('/usuarios', { params: { per_page: 100 } }).then(r => r.data)
+      const res = await getAllPages('/usuarios')
       const list = res.data || res || []
       localUsers.value = Array.isArray(list) ? list.map(mapUser) : []
     } catch {

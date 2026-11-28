@@ -3,6 +3,15 @@
     class="analysis-dashboard min-h-screen bg-gray-50/50 p-4 md:p-8 space-y-6"
     ref="dashboardContent"
   >
+    <div
+      v-if="loadError"
+      role="alert"
+      class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+    >
+      No se pudieron cargar los datos de análisis. Las cifras pueden estar incompletas; recarga la
+      página para intentarlo de nuevo.
+    </div>
+
     <!-- Header -->
     <header
       class="dashboard-header flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-xl border border-gray-100 shadow-sm"
@@ -562,12 +571,11 @@
   import { Clock, ArrowRight, BarChart2, Activity } from 'lucide-vue-next'
   import { useAuthStore } from '../../stores/authStore'
   import client from '../../api/client'
-  import { mockReportes, type Reporte } from '../../data/mockReportes'
-  import { mockTickets, type Ticket } from '../../data/mockTickets'
-  import { mockServices, type Service } from '../../data/mockServicios'
-  import { mockUsers, type Usuario } from '../../data/mockUsers'
-  import { mockEncuestas } from '../../data/mockEncuestas'
-  import { parseLocalDate, stripUtcSuffix } from '../../utils/reportMeta'
+  import { getAllPages } from '../../api/paginate'
+  import type { Reporte } from '../../data/mockReportes'
+  import type { Ticket } from '../../data/mockTickets'
+  import type { Service } from '../../data/mockServicios'
+  import { parseLocalDate, stripUtcSuffix, utcALocal } from '../../utils/reportMeta'
   import html2pdf from 'html2pdf.js'
 
   // Initialize auth
@@ -660,6 +668,8 @@
   const realServices = ref<Service[]>([])
   const realEncuestas = ref<any[]>([])
   const hasLoadedRealData = ref(false)
+  // Si la carga falla se muestra un aviso: nunca se rellenan las gráficas con datos de ejemplo.
+  const loadError = ref(false)
 
   const tipoLabel = (code: string): Reporte['tipoReporte'] =>
     (({ ticket: 'Ticket', servicio: 'Servicio Programado', libre: 'Libre' }) as any)[code] ||
@@ -707,22 +717,10 @@
   const loadRealOperationalData = async () => {
     try {
       const [rRes, tRes, sRes, eRes] = await Promise.all([
-        client
-          .get('/reportes', { params: { per_page: 200 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
-        client
-          .get('/tickets', { params: { per_page: 200 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
-        client
-          .get('/servicios', { params: { per_page: 200 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
-        client
-          .get('/encuestas', { params: { per_page: 200 } })
-          .then(r => r.data)
-          .catch(() => ({ data: [] })),
+        getAllPages('/reportes'),
+        getAllPages('/tickets'),
+        getAllPages('/servicios'),
+        getAllPages('/encuestas'),
       ])
       const rList = rRes.data || rRes || []
       const tList = tRes.data || tRes || []
@@ -757,7 +755,7 @@
             tipoReporte: tipoLabel(r.tipo),
             origenDatosId: rawOrigen !== null && rawOrigen !== undefined ? Number(rawOrigen) : null,
             categoria: catLabel(r.categoria),
-            fechaElaboracion: stripUtcSuffix(r.fecha_inicio || r.created_at || ''),
+            fechaElaboracion: r.fecha_inicio ? stripUtcSuffix(r.fecha_inicio) : utcALocal(r.created_at),
             fechaHoraInicio: stripUtcSuffix(r.fecha_inicio || ''),
             fechaHoraFin: stripUtcSuffix(r.fecha_fin || ''),
             horaSalidaBase: r.hora_salida ? stripUtcSuffix(r.hora_salida) : undefined,
@@ -788,7 +786,7 @@
             cargo: t.cargo || '',
             prioridad: priorityLabel(t.prioridad),
             estatus: ticketStatusLabel(rawStatus),
-            fechaSolicitud: stripUtcSuffix(t.fecha_solicitud || t.created_at || ''),
+            fechaSolicitud: t.fecha_solicitud ? stripUtcSuffix(t.fecha_solicitud) : utcALocal(t.created_at),
             fechaAtencion: stripUtcSuffix(t.fecha_atencion || ''),
             atendio: '',
           }
@@ -808,7 +806,9 @@
             categoria: s.categoria || '',
             estatus: serviceStatusLabel(rawStatus),
             prioridad: priorityLabel(s.prioridad),
-            fechaAsignacion: stripUtcSuffix(s.fecha_asignacion || s.created_at || ''),
+            fechaAsignacion: s.fecha_asignacion
+              ? stripUtcSuffix(s.fecha_asignacion)
+              : utcALocal(s.created_at),
             fechaVencimiento: stripUtcSuffix(s.fecha_vencimiento || ''),
             asignadoA: '',
             solicitante: s.solicitante || '',
@@ -825,23 +825,24 @@
       }
 
       hasLoadedRealData.value = true
+      loadError.value = false
     } catch {
-      /* fallback */
+      loadError.value = true
     }
   }
   onMounted(loadRealOperationalData)
 
   const baseReports = computed(() =>
-    hasLoadedRealData.value ? realReports.value : mockReportes
+    hasLoadedRealData.value ? realReports.value : []
   )
   const baseTickets = computed(() =>
-    hasLoadedRealData.value ? realTickets.value : mockTickets
+    hasLoadedRealData.value ? realTickets.value : []
   )
   const baseServices = computed(() =>
-    hasLoadedRealData.value ? realServices.value : mockServices
+    hasLoadedRealData.value ? realServices.value : []
   )
   const baseEncuestas = computed(() =>
-    hasLoadedRealData.value ? realEncuestas.value : mockEncuestas
+    hasLoadedRealData.value ? realEncuestas.value : []
   )
 
   const myOriginalReports = computed(() =>
@@ -898,9 +899,7 @@
     myOriginalReports.value.forEach(r => {
       r.ejecutoresIds.forEach(id => techIds.add(id))
     })
-    return mockUsers
-      .filter(u => techIds.has(u.idUsuario))
-      .map(u => ({ id: u.idUsuario, nombre: `${u.nombre} ${u.apellidos}` }))
+    return [...techIds].map(id => ({ id, nombre: `Usuario ${id}` }))
   })
 
   // 3. KPI Filtered Scopes (General vs Individual)
@@ -1304,10 +1303,8 @@
   const sortedTechnicianData = computed(() => {
     const data: { name: string; hours: number }[] = []
     technicianHoursMap.value.forEach((val: number, id: number) => {
-      // Preferir nombres reales de la API (usuarios), fallback a mockUsers
       const real = realTechs.value.find((u: any) => u.id === id)
-      const user = mockUsers.find((u: Usuario) => u.idUsuario === id)
-      const name = real ? real.nombre : user ? `${user.nombre} ${user.apellidos}` : `Usuario ${id}`
+      const name = real ? real.nombre : `Usuario ${id}`
       data.push({ name, hours: Number(val.toFixed(1)) })
     })
     return data.sort((a, b) => b.hours - a.hours) // Sort descending

@@ -4,7 +4,7 @@
   import { useAuthStore } from '../../stores/authStore'
   import { storeToRefs } from 'pinia'
   import { dashboardApi } from '../../api/dashboard'
-  import client from '../../api/client'
+  import { getAllPages } from '../../api/paginate'
   import {
     AlertOctagon,
     CalendarClock,
@@ -89,18 +89,9 @@
       if ((currentUser.value as any)?.rol === 3) {
         const uid = (currentUser.value as any)?.id
         const [tRes, sRes, rRes] = await Promise.all([
-          client
-            .get('/tickets', { params: { usuario_asignado_id: uid, per_page: 500 } })
-            .then(r => r.data)
-            .catch(() => ({ data: [] })),
-          client
-            .get('/servicios', { params: { usuario_asignado_id: uid, per_page: 500 } })
-            .then(r => r.data)
-            .catch(() => ({ data: [] })),
-          client
-            .get('/reportes', { params: { creado_por: uid, per_page: 500 } })
-            .then(r => r.data)
-            .catch(() => ({ data: [] })),
+          getAllPages('/tickets', { usuario_asignado_id: uid }).catch(() => ({ data: [] })),
+          getAllPages('/servicios', { usuario_asignado_id: uid }).catch(() => ({ data: [] })),
+          getAllPages('/reportes', { creado_por: uid }).catch(() => ({ data: [] })),
         ])
         const tList = tRes.data || tRes || []
         const sList = sRes.data || sRes || []

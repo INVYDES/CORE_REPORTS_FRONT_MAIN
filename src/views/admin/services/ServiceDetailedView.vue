@@ -11,6 +11,7 @@
     AlertCircle,
   } from 'lucide-vue-next'
   import client from '../../../api/client'
+  import { getAllPages } from '../../../api/paginate'
   import {
     formatLocalDateOnly,
     formatLocalDateTime,
@@ -138,7 +139,7 @@
         .map((u: any) => ({ id: u.id, nombre: u.nombre, apellidos: u.apellidos }))
     } catch {}
     try {
-      const res = await client.get('/areas', { params: { per_page: 100 } }).then(r => r.data)
+      const res = await getAllPages('/areas')
       const list = res.data || res || []
       if (Array.isArray(list)) areas.value = list
     } catch {}
