@@ -95,6 +95,8 @@ const llenarFormulario = async (wrapper: ReturnType<typeof mount>) => {
   await wrapper.find('input[placeholder="ADM-001"]').setValue('ADM-777')
   await wrapper.find('input[type="email"]').setValue('ana@empresa.mx')
   await wrapper.find('input[autocomplete="new-password"]').setValue('secreto-123')
+  await wrapper.find('[data-test="payment-method"]').setValue('PUE')
+  await wrapper.find('[data-test="payment-form"]').setValue('03')
 }
 
 const payloadEnviado = () => postMock.mock.calls[0]![1] as Record<string, any>
@@ -135,6 +137,8 @@ describe('RegisterView', () => {
       numeroEmpleado: 'ADM-777',
       email: 'ana@empresa.mx',
       password: 'secreto-123',
+      paymentMethod: 'PUE',
+      paymentForm: '03',
       licenciaToken: 'tok-10m',
     })
     expect(payloadEnviado()).not.toHaveProperty('invoiceRequired')

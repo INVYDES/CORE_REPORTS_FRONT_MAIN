@@ -569,7 +569,8 @@
               <!-- Método de pago preferido-->
               <div class="form-group half">
                 <label>Método de Pago Preferido *</label>
-                <select v-model="formData.paymentMethod" required>
+                <select v-model="formData.paymentMethod" data-test="payment-method" required>
+                  <option value="" disabled>Seleccione...</option>
                   <option value="PUE">PUE - Pago en una sola exhibición</option>
                   <option value="PPD">PPD - Pago en parcialidades</option>
                 </select>
@@ -578,7 +579,8 @@
               <!-- Forma de pago-->
               <div class="form-group half">
                 <label>Forma de Pago *</label>
-                <select v-model="formData.paymentForm" required>
+                <select v-model="formData.paymentForm" data-test="payment-form" required>
+                  <option value="" disabled>Seleccione...</option>
                   <option value="01">01 - Efectivo</option>
                   <option value="03">03 - Transferencia</option>
                   <option value="04">04 - Tarjeta de crédito</option>
