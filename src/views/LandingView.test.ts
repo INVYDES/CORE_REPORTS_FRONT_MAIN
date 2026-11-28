@@ -65,7 +65,7 @@ describe('LandingView', () => {
     const wrapper = mount(LandingView, { global: globalConfig })
 
     expect(wrapper.text()).toContain('Mantenimiento, tickets y reportes')
-    expect(wrapper.text()).toContain('Comenzar prueba gratis')
+    expect(wrapper.text()).toContain('Comenzar gratis')
     expect(wrapper.find('.lang-switch button.active').text()).toBe('ES')
   })
 
