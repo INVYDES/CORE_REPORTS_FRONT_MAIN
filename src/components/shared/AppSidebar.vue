@@ -82,7 +82,7 @@
         label: 'Mi licencia',
         path: 'licencia',
         icon: CreditCard,
-        roles: [0, 1, 2, 3],
+        roles: [1, 2],
       },
 
       {

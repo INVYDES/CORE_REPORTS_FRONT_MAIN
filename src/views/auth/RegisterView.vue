@@ -151,7 +151,6 @@
     rfc: '',
     fiscalRegime: '',
     cfdiUse: '',
-    numeroEmpleado: '',
     firstName: '',
     lastNamePaternal: '',
     lastNameMaternal: '',
@@ -240,6 +239,14 @@
     return e?.response?.data?.message || porDefecto
   }
 
+  const irAlPanel = () => {
+    if (typeof router.resolve === 'function') {
+      window.location.assign(router.resolve({ name: 'dashboard' }).href)
+    } else {
+      router.push({ name: 'dashboard' })
+    }
+  }
+
   const handleRegister = async () => {
     if (!selectedLicencia.value) {
       toast.error('Selecciona un plan para continuar')
@@ -258,7 +265,6 @@
         firstName: formData.firstName,
         lastNamePaternal: formData.lastNamePaternal,
         lastNameMaternal: formData.lastNameMaternal,
-        numeroEmpleado: formData.numeroEmpleado.trim(),
         phone: formData.phone,
         street: formData.street,
         colony: formData.colony,
@@ -292,7 +298,7 @@
 
       if (!data.requiere_pago) {
         toast.success('Cuenta creada con el plan Gratis. ¡Bienvenido!')
-        router.push({ name: 'dashboard' })
+        irAlPanel()
         return
       }
 
@@ -324,7 +330,7 @@
         window.location.href = initPoint
       } else {
         toast.success('Licencia activada')
-        router.push({ name: 'dashboard' })
+        irAlPanel()
       }
     } catch (e: any) {
       toast.error(mensajeError(e, 'Error al crear preferencia de pago'))
@@ -400,33 +406,15 @@
           <div class="form-section">
             <h3><span class="step-num">2</span> Información del administrador</h3>
 
-            <!-- 2 input fields in a single row -->
-            <div class="row">
-              <!--ID de empleado con el que iniciará sesión-->
-              <div class="form-group half">
-                <label>ID de Empleado *</label>
-                <input
-                  v-model="formData.numeroEmpleado"
-                  type="text"
-                  required
-                  maxlength="50"
-                  pattern="(?=.*\d)[A-Za-z0-9][A-Za-z0-9._-]{2,49}"
-                  autocomplete="username"
-                  placeholder="ADM-001"
-                />
-                <p class="plan-hint">Con este ID y tu contraseña podrás iniciar sesión.</p>
-              </div>
-
-              <!--Correo electrónico-->
-              <div class="form-group half">
-                <label>Correo electrónico *</label>
-                <input
-                  v-model="formData.email"
-                  type="email"
-                  required
-                  placeholder="admin@correo.com"
-                />
-              </div>
+            <!--Correo electrónico-->
+            <div class="form-group">
+              <label>Correo electrónico *</label>
+              <input
+                v-model="formData.email"
+                type="email"
+                required
+                placeholder="admin@correo.com"
+              />
             </div>
 
             <!-- Contraseña -->
@@ -621,7 +609,7 @@
             </button>
             <button
               type="button"
-              @click="router.push({ name: 'dashboard' })"
+              @click="irAlPanel"
               style="
                 width: 100%;
                 margin-top: 0.5rem;

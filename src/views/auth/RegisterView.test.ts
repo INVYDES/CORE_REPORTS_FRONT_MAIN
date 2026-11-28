@@ -92,7 +92,6 @@ const montar = async () => {
 
 const llenarFormulario = async (wrapper: ReturnType<typeof mount>) => {
   await wrapper.find('input[placeholder^="MATERIALES"]').setValue('Materiales del Norte S.A.')
-  await wrapper.find('input[placeholder="ADM-001"]').setValue('ADM-777')
   await wrapper.find('input[type="email"]').setValue('ana@empresa.mx')
   await wrapper.find('input[autocomplete="new-password"]').setValue('secreto-123')
   await wrapper.find('[data-test="payment-method"]').setValue('PUE')
@@ -134,13 +133,13 @@ describe('RegisterView', () => {
     expect(postMock.mock.calls[0]![0]).toBe('/public/register-compania')
     expect(payloadEnviado()).toMatchObject({
       companyName: 'Materiales del Norte S.A.',
-      numeroEmpleado: 'ADM-777',
       email: 'ana@empresa.mx',
       password: 'secreto-123',
       paymentMethod: 'PUE',
       paymentForm: '03',
       licenciaToken: 'tok-10m',
     })
+    expect(payloadEnviado()).not.toHaveProperty('numeroEmpleado')
     expect(payloadEnviado()).not.toHaveProperty('invoiceRequired')
     expect(wrapper.text()).toContain('Tu mes gratis está activo')
   })

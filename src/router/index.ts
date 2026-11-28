@@ -137,7 +137,7 @@ const router = createRouter({
           path: 'licencia',
           name: 'licencia',
           component: () => import('../views/admin/licencias/RenewLicenseView.vue'),
-          meta: { allowedRoles: [0, 1, 2, 3] },
+          meta: { allowedRoles: [1, 2] },
         },
 
         {
@@ -271,7 +271,11 @@ router.beforeEach(to => {
 
   // Control de roles
   const allowedRoles = to.meta.allowedRoles as number[] | undefined
-  if (allowedRoles && allowedRoles.length > 0) {
+  if (
+    allowedRoles &&
+    allowedRoles.length > 0 &&
+    !(to.name === 'licencia' && auth.isLicenciaVencida)
+  ) {
     const userRole = auth.currentUser?.rol
     if (userRole === undefined || !allowedRoles.includes(userRole)) {
       return { name: auth.isSuperAdmin ? 'plataforma' : 'dashboard' }

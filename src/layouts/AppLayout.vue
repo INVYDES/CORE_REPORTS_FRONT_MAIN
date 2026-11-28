@@ -56,11 +56,7 @@
 
       <main class="content-body">
         <router-view v-slot="{ Component, route }">
-          <template v-if="Component">
-            <transition name="fade" mode="out-in">
-              <component :is="Component" :key="route.path" />
-            </transition>
-          </template>
+          <component :is="Component" v-if="Component" :key="route.path" />
         </router-view>
       </main>
 

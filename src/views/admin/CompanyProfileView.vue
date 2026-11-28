@@ -314,13 +314,22 @@
     }
     try {
       if (isEditing.value) {
-        await client.put(`/usuarios/${userForm.value.idUsuario}`, {
+        const nuevaPassword = (userForm.value.password || '').trim()
+        if (nuevaPassword && nuevaPassword.length < 6) {
+          toast.warning('La contraseña debe tener al menos 6 caracteres')
+          return
+        }
+        const payload: Record<string, any> = {
           nombre: userForm.value.nombre,
           apellidos: userForm.value.apellidos,
           email: userForm.value.correo,
           rol: userForm.value.rol,
           numero_empleado: userForm.value.numeroEmpleado || null,
-        })
+        }
+        if (nuevaPassword) {
+          payload.password = nuevaPassword
+        }
+        await client.put(`/usuarios/${userForm.value.idUsuario}`, payload)
         toast.success('Usuario actualizado')
       } else {
         if (!userForm.value.password || userForm.value.password.length < 6) {
