@@ -73,7 +73,7 @@
   })
 
   // Control para mostrar u ocultar la funcionalidad de envío por correo
-  const ENABLE_EMAIL_FEATURE = true
+  const ENABLE_EMAIL_FEATURE = false
 
   const nuevoCorreoInput = ref('')
   const agregarCorreo = () => {
