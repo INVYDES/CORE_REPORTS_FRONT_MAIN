@@ -151,7 +151,7 @@
     rfc: '',
     fiscalRegime: '',
     cfdiUse: '',
-    username: '',
+    numeroEmpleado: '',
     firstName: '',
     lastNamePaternal: '',
     lastNameMaternal: '',
@@ -166,7 +166,6 @@
     phone: '',
     paymentMethod: '',
     paymentForm: '',
-    invoiceRequired: false,
   })
 
   const licencias = ref<any[]>([])
@@ -174,8 +173,13 @@
   const licenciaRegistrada = ref<any | null>(null)
   const showPago = ref(false)
 
+  // Clave de selección: el token es único por plan. El `codigo` del catálogo de
+  // respaldo del backend se repite entre planes (todos los mensuales comparten
+  // 'mensual'), así que solo se usa cuando el plan no trae token.
+  const clavePlan = (lic: any) => lic?.token || lic?.codigo || ''
+
   const selectedPlan = computed(
-    () => licencias.value.find(lic => lic.codigo === selectedLicencia.value) || null
+    () => licencias.value.find(lic => clavePlan(lic) === selectedLicencia.value) || null
   )
 
   const esPlanGratuito = (lic: any) => lic?.codigo === 'trial' || Number(lic?.precio) === 0
@@ -210,11 +214,30 @@
       loadingPlans.value = false
       if (!selectedLicencia.value) {
         selectedLicencia.value =
-          licencias.value.find(lic => esPlanGratuito(lic))?.codigo ??
-          licencias.value[0]?.codigo ??
+          clavePlan(licencias.value.find(lic => esPlanGratuito(lic))) ||
+          clavePlan(licencias.value[0]) ||
           null
       }
     }
+  }
+
+  const mensajeError = (e: any, porDefecto: string) => {
+    const status = e?.response?.status
+    if (status === 419) {
+      return 'Sesión expirada. Recarga la página e intenta de nuevo.'
+    }
+    if (status === 429) {
+      const reintento = e?.response?.data?.retry_after ?? e?.response?.headers?.['retry-after']
+      return reintento
+        ? `Demasiados intentos. Espera ${reintento} segundos e intenta de nuevo.`
+        : 'Demasiados intentos. Espera un momento e intenta de nuevo.'
+    }
+    const errores = e?.response?.data?.errors
+    if (errores && typeof errores === 'object') {
+      const primero = Object.values(errores).flat()[0]
+      if (typeof primero === 'string' && primero) return primero
+    }
+    return e?.response?.data?.message || porDefecto
   }
 
   const handleRegister = async () => {
@@ -235,7 +258,16 @@
         firstName: formData.firstName,
         lastNamePaternal: formData.lastNamePaternal,
         lastNameMaternal: formData.lastNameMaternal,
+        numeroEmpleado: formData.numeroEmpleado.trim(),
         phone: formData.phone,
+        street: formData.street,
+        colony: formData.colony,
+        zipCode: formData.zipCode,
+        city: formData.city,
+        state: formData.state,
+        municipality: formData.municipality,
+        paymentMethod: formData.paymentMethod,
+        paymentForm: formData.paymentForm,
         // Token opaco del plan: lo emite el backend y tiene vigencia corta.
         licenciaToken: selectedPlan.value?.token || undefined,
         licenciaId: selectedPlan.value?.id ?? undefined,
@@ -268,11 +300,7 @@
       showPago.value = true
       toast.success('Cuenta creada con 1 mes gratis del plan que elegiste.')
     } catch (e: any) {
-      toast.error(
-        e?.response?.data?.message ||
-          JSON.stringify(e?.response?.data?.errors) ||
-          'Error al registrar'
-      )
+      toast.error(mensajeError(e, 'Error al registrar. Intenta de nuevo.'))
     } finally {
       isLoading.value = false
     }
@@ -299,7 +327,7 @@
         router.push({ name: 'dashboard' })
       }
     } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Error al crear preferencia de pago')
+      toast.error(mensajeError(e, 'Error al crear preferencia de pago'))
     } finally {
       isLoading.value = false
     }
@@ -374,10 +402,19 @@
 
             <!-- 2 input fields in a single row -->
             <div class="row">
-              <!--Nombre de usuario-->
+              <!--ID de empleado con el que iniciará sesión-->
               <div class="form-group half">
-                <label>Nombre de Usuario *</label>
-                <input v-model="formData.username" type="text" required placeholder="admin_mta" />
+                <label>ID de Empleado *</label>
+                <input
+                  v-model="formData.numeroEmpleado"
+                  type="text"
+                  required
+                  maxlength="50"
+                  pattern="(?=.*\d)[A-Za-z0-9][A-Za-z0-9._-]{2,49}"
+                  autocomplete="username"
+                  placeholder="ADM-001"
+                />
+                <p class="plan-hint">Con este ID y tu contraseña podrás iniciar sesión.</p>
               </div>
 
               <!--Correo electrónico-->
@@ -400,7 +437,9 @@
                   v-model="formData.password"
                   :type="showPassword ? 'text' : 'password'"
                   required
-                  placeholder="••••••••"
+                  minlength="8"
+                  autocomplete="new-password"
+                  placeholder="Mínimo 8 caracteres"
                 />
                 <button
                   type="button"
@@ -499,11 +538,16 @@
             <!-- Tipo de licencia (Plan)-->
             <div class="form-group">
               <label>Tipo de Licencia (Plan) *</label>
-              <select v-model="selectedLicencia" required :disabled="loadingPlans">
+              <select
+                v-model="selectedLicencia"
+                data-test="plan-select"
+                required
+                :disabled="loadingPlans"
+              >
                 <option :value="null" disabled>
                   {{ loadingPlans ? 'Cargando planes...' : 'Seleccione un plan...' }}
                 </option>
-                <option v-for="lic in licencias" :key="lic.codigo" :value="lic.codigo">
+                <option v-for="lic in licencias" :key="clavePlan(lic)" :value="clavePlan(lic)">
                   {{ etiquetaPlan(lic) }}
                 </option>
               </select>
@@ -543,13 +587,6 @@
               </div>
             </div>
 
-            <!-- Checkbox "Requiero factura"-->
-            <div class="form-group checkbox-group">
-              <label class="checkbox-label">
-                <input type="checkbox" v-model="formData.invoiceRequired" />
-                <span>Requiero Factura</span>
-              </label>
-            </div>
           </div>
 
           <!-- SECCIÓN 5 - MES GRATIS DEL PLAN ELEGIDO -->
@@ -784,32 +821,6 @@
 
   .password-toggle:hover {
     color: $dark-blue;
-  }
-
-  // Checkbox input
-  input[type='checkbox'] {
-    width: auto !important;
-    margin-right: 10px;
-    transform: scale(1.2);
-    cursor: pointer;
-  }
-
-  //Checkbox group
-  .checkbox-group {
-    margin-top: 1.5 rem;
-    padding: 10px 0;
-
-    // Checkbox label
-    .checkbox-label {
-      display: flex;
-      align-items: center;
-      justify-content: flex-start;
-      gap: 0;
-      cursor: pointer;
-      font-size: 1rem;
-      font-weight: 500;
-      color: $text-gray;
-    }
   }
 
   // Actions
