@@ -166,7 +166,16 @@
       cargoTexto: unpacked.meta.cargo || '',
       esRetrabajo: !!raw.es_retrabajo,
       responsableId: raw.responsable_id,
-      ejecutoresIds: (raw.ejecutores || []).map((e: any) => e.usuario_id),
+      ejecutoresIds:
+        Array.isArray(raw.ejecutores) && raw.ejecutores.length > 0
+          ? raw.ejecutores.map((e: any) => Number(e.usuario_id || e.id)).filter(Boolean)
+          : (raw.creado_por ? [Number(raw.creado_por)] : []),
+      ejecutores: (Array.isArray(raw.ejecutores) ? raw.ejecutores : []).map((e: any) => ({
+        id: Number(e.usuario_id || e.id),
+        nombre: e.usuario ? `${e.usuario.nombre || ''} ${e.usuario.apellidos || ''}`.trim() : '',
+        cargo: e.usuario?.cargo || '',
+        numeroEmpleado: e.usuario?.numero_empleado || '',
+      })),
       materiales: metaMateriales.length > 0 ? metaMateriales : dbMateriales,
       evidenciaFotografica: (raw.evidencias || [])
         .map((ev: any, idx: number) => ({
@@ -188,27 +197,29 @@
 
   const loadReport = async () => {
     try {
-      const res = await client.get(`/reportes/${reportId}`).then(r => r.data)
-      applyReport(res.data || res)
+      const [resRep, resTec, resAreas] = await Promise.allSettled([
+        client.get(`/reportes/${reportId}`),
+        client.get('/tecnicos'),
+        getAllPages('/areas'),
+      ])
+      if (resTec.status === 'fulfilled') {
+        const list = resTec.value.data?.data || resTec.value.data || []
+        if (Array.isArray(list)) users.value = list
+      }
+      if (resAreas.status === 'fulfilled') {
+        const list = resAreas.value.data?.data || resAreas.value.data || []
+        if (Array.isArray(list)) areas.value = list
+      }
+      if (resRep.status === 'fulfilled') {
+        applyReport(resRep.value.data?.data || resRep.value.data)
+      } else {
+        throw resRep.reason
+      }
     } catch (err: any) {
       console.error('Error cargando reporte:', err)
       const msg = err?.response?.data?.message || err?.message || 'Error del servidor al obtener reporte'
       toast.error(`Error al cargar reporte: ${msg}`)
       report.value = null
-    }
-    try {
-      const res = await client.get('/tecnicos').then(r => r.data)
-      const list = res.data || res || []
-      if (Array.isArray(list)) users.value = list
-    } catch (err: any) {
-      console.error('Error cargando técnicos:', err)
-    }
-    try {
-      const res = await getAllPages('/areas')
-      const list = res.data || res || []
-      if (Array.isArray(list)) areas.value = list
-    } catch {
-      /* no-op */
     }
   }
   onMounted(() => {
@@ -223,7 +234,16 @@
   }
 
   const getEjecutoresNames = (ids: number[]) => {
-    if (!ids || ids.length === 0) return 'Ninguno'
+    if (report.value?.ejecutores && report.value.ejecutores.length > 0) {
+      const names = report.value.ejecutores
+        .map((e: any) => e.nombre || getUserName(e.id))
+        .filter((n: string) => n && n !== 'Usuario Desconocido' && n !== 'Sin Asignar')
+      if (names.length > 0) return names.join(', ')
+    }
+    if (!ids || ids.length === 0) {
+      if (report.value?.creadoPor) return getUserName(report.value.creadoPor)
+      return 'Ninguno'
+    }
     return ids.map(id => getUserName(id)).join(', ')
   }
 
@@ -468,9 +488,10 @@
     editForm.cargoTexto =
       report.value.cargoTexto ||
       (displayResponsableCargo.value !== '---' ? displayResponsableCargo.value : '')
-    editForm.ejecutoresIds = Array.isArray(report.value.ejecutoresIds)
-      ? [...report.value.ejecutoresIds]
-      : []
+    editForm.ejecutoresIds =
+      Array.isArray(report.value.ejecutoresIds) && report.value.ejecutoresIds.length > 0
+        ? [...report.value.ejecutoresIds]
+        : (report.value.creadoPor ? [Number(report.value.creadoPor)] : [])
     editForm.esEnTercero = !!report.value.esEnTercero
     editForm.horaSalidaBase = report.value.esEnTercero
       ? toInputDatetimeLocal(report.value.horaSalidaBase)
@@ -1470,10 +1491,10 @@
                 <span>Enviar por Correo</span>
               </button>
               <button v-if="canEditReport" class="btn-secondary" @click="openEditModal">
-                ✏️ Editar Reporte
+                Editar Reporte
               </button>
               <button v-if="currentUser?.rol !== 3" class="btn-survey" @click="openSurvey">
-                ⭐ Encuesta al Cliente
+                Encuesta al Cliente
               </button>
             </div>
           </div>

@@ -198,12 +198,27 @@
         formData.categoria = mappedCat
       }
     }
-    const uid = (currentUser.value as any)?.id ?? (currentUser.value as any)?.idUsuario
+    const uid = Number((currentUser.value as any)?.id ?? (currentUser.value as any)?.idUsuario ?? 0)
     const execId = Number(item.usuario_asignado_id || uid || 0)
-    if (formData.ejecutoresIds.length === 0 && execId > 0) {
+    if (formData.ejecutoresIds.filter(id => id && Number(id) > 0).length === 0 && execId > 0) {
       formData.ejecutoresIds = [execId]
     }
   }
+
+  const ensureDefaultEjecutor = () => {
+    const uid = Number((currentUser.value as any)?.id ?? (currentUser.value as any)?.idUsuario ?? 0)
+    const valid = formData.ejecutoresIds.filter(id => id && Number(id) > 0)
+    if (valid.length === 0 && uid > 0) {
+      formData.ejecutoresIds = [uid]
+    }
+  }
+
+  watch(
+    () => availableTechniciansReal.value,
+    () => {
+      ensureDefaultEjecutor()
+    }
+  )
 
   watch(
     () => [formData.tipoReporte, formData.origenDatosId] as const,
@@ -259,6 +274,7 @@
     }
 
     applyOriginPrefill(formData.tipoReporte, formData.origenDatosId)
+    ensureDefaultEjecutor()
 
     // Pre-cargar correo para recepción de reportes de la empresa si existe
     try {
@@ -371,9 +387,9 @@
       return availableTicketsReal.value
         .filter((t: any) => {
           if (Number(t.id) === Number(formData.origenDatosId)) return true
-          // Exclude already resolved or closed tickets from creation list
+          // Exclude already closed tickets from creation list
           const st = String(t.estatus || '').toLowerCase()
-          if (['resuelto', 'cerrado'].includes(st)) return false
+          if (st === 'cerrado') return false
           return currentUser.value?.rol === 3 ? Number(t.usuario_asignado_id) === Number(uid) : true
         })
         .map((t: any) => ({
@@ -411,6 +427,7 @@
     if (isSaving.value) return
     isSaving.value = true
     try {
+      ensureDefaultEjecutor()
       const { mapReporteForBackend, buildReporteFormData } = await import('../../../api/mapper')
       const mapped = mapReporteForBackend(formData, pendingFiles.value)
       if (!formData.responsableTexto.trim()) {

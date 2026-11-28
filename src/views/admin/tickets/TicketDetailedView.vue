@@ -100,7 +100,7 @@
       cargo: (raw.cargo || '')
         .replace(/(?:[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]|\u{FE0F})/gu, '')
         .trim(),
-      estatus: hasFinalizadoReport ? 'Resuelto' : statusLabel(raw.estatus),
+      estatus: statusLabel(raw.estatus),
       prioridad: priorityLabel(raw.prioridad),
       atendio: raw.asignado
         ? `${raw.asignado.nombre || ''} ${raw.asignado.apellidos || ''}`.trim()
@@ -183,14 +183,14 @@
     })
   }
 
-  const isTicketResolved = computed(() => {
+  const isTicketClosed = computed(() => {
     if (!ticket.value) return false
     const st = String(ticket.value.estatus || '').toLowerCase()
-    return st === 'resuelto' || st === 'cerrado' || Boolean(ticket.value.reporteAsociadoId)
+    return st === 'cerrado'
   })
 
   const goToCreateReport = () => {
-    if (!ticket.value || isTicketResolved.value) return
+    if (!ticket.value || isTicketClosed.value) return
     router.push({
       name: 'reports-new',
       query: {
@@ -222,11 +222,11 @@
           </div>
           <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
             <button
-              v-if="!isTicketResolved && (currentUser?.rol === 1 || currentUser?.rol === 3)"
+              v-if="!isTicketClosed && (currentUser?.rol === 1 || currentUser?.rol === 3)"
               @click="goToCreateReport"
               style="background: #2563eb; border: none; color: #ffffff; padding: 10px 18px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);"
             >
-              📝 Crear Reporte
+              Crear Reporte
             </button>
           </div>
         </div>
