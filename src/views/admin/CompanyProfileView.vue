@@ -358,7 +358,9 @@
   // Modal de Cambio de Plan
   const isPlanModalOpen = ref(false)
   const availablePlans = ref<any[]>([])
-  const buyingPlanId = ref<number | null>(null)
+  const buyingPlanId = ref<string | number | null>(null)
+
+  const planKey = (plan: any) => plan?.token || plan?.codigo || plan?.id
 
   const loadPlans = async () => {
     try {
@@ -406,12 +408,16 @@
 
   const selectPlan = async (plan: any) => {
     if (buyingPlanId.value !== null) return
-    buyingPlanId.value = plan.id
+    buyingPlanId.value = planKey(plan)
     try {
       const res = await client
-        .post(`/licencias/${plan.id}/comprar-mercadopago`, {
-          ciclo: plan.tipo || 'mensual',
-        })
+        .post(
+          plan.token ? '/licencias/comprar-mercadopago' : `/licencias/${plan.id}/comprar-mercadopago`,
+          {
+            licenciaToken: plan.token || undefined,
+            ciclo: plan.tipo || 'mensual',
+          }
+        )
         .then(r => r.data)
       const url = res?.init_point || res?.data?.init_point || res?.sandbox_init_point
       if (url) {
@@ -1112,7 +1118,7 @@
           <div class="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-3 gap-4">
             <div
               v-for="plan in availablePlans"
-              :key="plan.id"
+              :key="planKey(plan)"
               class="border border-slate-200 rounded-xl p-4 flex flex-col justify-between hover:border-blue-500 transition-all"
             >
               <div>
@@ -1133,10 +1139,10 @@
               </div>
               <button
                 class="btn-primary w-full mt-5 text-sm"
-                :disabled="buyingPlanId === plan.id"
+                :disabled="buyingPlanId === planKey(plan)"
                 @click="selectPlan(plan)"
               >
-                {{ buyingPlanId === plan.id ? 'Procesando...' : 'Elegir Plan' }}
+                {{ buyingPlanId === planKey(plan) ? 'Procesando...' : 'Elegir Plan' }}
               </button>
             </div>
           </div>

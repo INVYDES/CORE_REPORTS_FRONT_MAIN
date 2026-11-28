@@ -170,12 +170,12 @@
   })
 
   const licencias = ref<any[]>([])
-  const selectedLicencia = ref<number | null>(null)
+  const selectedLicencia = ref<string | null>(null)
   const licenciaRegistrada = ref<any | null>(null)
   const showPago = ref(false)
 
   const selectedPlan = computed(
-    () => licencias.value.find(lic => lic.id === selectedLicencia.value) || null
+    () => licencias.value.find(lic => lic.codigo === selectedLicencia.value) || null
   )
 
   const esPlanGratuito = (lic: any) => lic?.codigo === 'trial' || Number(lic?.precio) === 0
@@ -210,7 +210,9 @@
       loadingPlans.value = false
       if (!selectedLicencia.value) {
         selectedLicencia.value =
-          licencias.value.find(lic => esPlanGratuito(lic))?.id ?? licencias.value[0]?.id ?? null
+          licencias.value.find(lic => esPlanGratuito(lic))?.codigo ??
+          licencias.value[0]?.codigo ??
+          null
       }
     }
   }
@@ -236,7 +238,7 @@
         phone: formData.phone,
         // Token opaco del plan: lo emite el backend y tiene vigencia corta.
         licenciaToken: selectedPlan.value?.token || undefined,
-        licenciaId: selectedLicencia.value,
+        licenciaId: selectedPlan.value?.id ?? undefined,
       })
 
       if (data.requiere_verificacion) {
@@ -278,7 +280,7 @@
 
   const pagarConMercadoPago = async () => {
     const licencia = licenciaRegistrada.value || selectedPlan.value
-    if (!licencia?.id) {
+    if (!licencia?.token && !licencia?.id) {
       toast.error('No se encontró la licencia seleccionada')
       return
     }
@@ -501,7 +503,7 @@
                 <option :value="null" disabled>
                   {{ loadingPlans ? 'Cargando planes...' : 'Seleccione un plan...' }}
                 </option>
-                <option v-for="lic in licencias" :key="lic.id" :value="lic.id">
+                <option v-for="lic in licencias" :key="lic.codigo" :value="lic.codigo">
                   {{ etiquetaPlan(lic) }}
                 </option>
               </select>
